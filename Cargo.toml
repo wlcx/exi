@@ -5,7 +5,7 @@ repository = "https://github.com/wlcx/exi"
 authors = ["Sam W <sam@wlcx.cc>"]
 version = "0.1.0"
 edition = "2021"
-categories = ["encoding", "compression"]
+categories = ["parser-implementations", "encoding", "compression"]
 keywords = ["exi", "xml", "decoder"]
 readme = "readme.md"
 
