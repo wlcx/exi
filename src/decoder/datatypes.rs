@@ -3,10 +3,10 @@ use std::{cell::RefCell, fmt::Display, ops::RangeBounds, rc::Rc};
 use nom::{
     bits::complete::{bool, tag, take},
     combinator::{map, verify},
-    error::{make_error, Error, ErrorKind},
+    error::Error,
     multi::count,
     sequence::tuple,
-    IResult, Parser,
+    Parser,
 };
 
 use crate::{

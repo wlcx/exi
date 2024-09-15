@@ -1,7 +1,5 @@
 use std::{fmt::Display, rc::Rc};
 
-use nom::IResult;
-
 use crate::util::BitInput;
 
 use super::{

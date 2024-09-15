@@ -4,9 +4,8 @@ mod errors;
 mod grammars;
 mod options;
 
-use std::borrow::Borrow;
-use std::cell::{Ref, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Deref, Index, IndexMut};
 use std::rc::Rc;
