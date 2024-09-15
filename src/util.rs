@@ -6,6 +6,9 @@ use nom::{bits::complete::take, IResult};
 pub type BitInput<'a> = (&'a [u8], usize);
 
 pub fn ilog2_ceil(v: usize) -> u32 {
+    if v == 0 {
+        return 0;
+    }
     usize::BITS - (v - 1).leading_zeros()
 }
 
@@ -36,7 +39,8 @@ where
 
 // Parse the remaining bits left in an input to make it byte-aligned again
 pub fn trailing_bits(i: BitInput) -> IResult<BitInput, usize> {
-    take(8 - i.1)(i)
+    let n = if i.1 == 0 { 0 } else { 8 - i.1 };
+    take(n)(i)
 }
 
 #[cfg(test)]
@@ -67,5 +71,26 @@ mod tests {
         assert_eq!(lower_bound(&(-5..-1)), Some(-5));
 
         assert_eq!(lower_bound(&(-1..-5)), Some(-1));
+    }
+
+    #[test]
+    fn test_trailing_bits() {
+        // Should successfully parse empty input
+        assert_eq!(
+            trailing_bits((&[], 0)),
+            Ok(((vec!().as_slice(), 0usize), 0usize))
+        );
+
+        // Should parse nothing if input already byte-aligned
+        assert_eq!(
+            trailing_bits((&[0x42], 0)),
+            Ok(((vec!(0x42).as_slice(), 0usize), 0usize))
+        );
+
+        // Should parse trailing bits if input not byte-aligned
+        assert_eq!(
+            trailing_bits((&[0b1111_1111, 0x42], 3)),
+            Ok(((vec!(0x42).as_slice(), 0usize), 0b0001_1111))
+        );
     }
 }

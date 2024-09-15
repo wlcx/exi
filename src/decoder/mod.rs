@@ -1,15 +1,20 @@
+mod codetree;
 mod datatypes;
+mod errors;
 mod grammars;
 mod options;
 
-use std::cell::RefCell;
+use std::borrow::Borrow;
+use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::ops::{Index, IndexMut};
+use std::fmt::Display;
+use std::ops::{Deref, Index, IndexMut};
 use std::rc::Rc;
 
 use datatypes::{
     n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x, Qname, Value,
 };
+use errors::ExiError;
 use grammars::{DocumentGrammar, ElementGrammar, GrammaryThing};
 use nom::branch::alt;
 use nom::combinator::{all_consuming, map, success};
@@ -19,13 +24,14 @@ use nom::{
         complete::{bool, tag, take},
     },
     combinator::opt,
-    error::Error,
     sequence::{preceded, tuple},
     IResult,
 };
 use options::Options;
 
 use crate::util::{ilog2_ceil, trailing_bits, BitInput};
+
+type ExiResult<I, O> = IResult<I, O, ExiError<I>>;
 
 /// The EXI stream header. Contains the format `version` and any `options`.
 #[derive(Debug, PartialEq)]
@@ -34,15 +40,21 @@ pub struct Header {
     pub options: Option<Options>,
 }
 
+#[derive(Debug)]
 struct PrefixTable<T>(Vec<T>);
 
-impl<T> PrefixTable<T> {
+impl<T: std::fmt::Debug> PrefixTable<T> {
     fn new() -> Self {
         Self(Vec::new())
     }
 
     fn add(&mut self, i: T) -> usize {
         self.0.push(i);
+        log::debug!(
+            "Added {:?} to prefix table, contents: {:?}",
+            self.0[self.0.len() - 1],
+            self.0
+        );
         self.0.len() + 1
     }
 
@@ -63,7 +75,7 @@ impl<T> PrefixTable<T> {
 
     // Length in bits of the prefix needed to identify values in this table
     fn prefix_length(&self) -> u32 {
-        ilog2_ceil(self.len() + 1)
+        ilog2_ceil(self.len())
     }
 }
 
@@ -86,6 +98,7 @@ impl<T> IndexMut<usize> for PrefixTable<T> {
     }
 }
 
+#[derive(Debug)]
 struct URIStringTable {
     uri: String,
     prefix: PrefixTable<String>,
@@ -110,6 +123,7 @@ struct StringTable {
 
 impl StringTable {
     fn add_value(&mut self, qname: Qname, value: Value) {
+        log::debug!("Adding {:?} to string table", value);
         let s = Rc::new(value);
         self.global_values.add(s.clone());
         self.local_values
@@ -118,12 +132,12 @@ impl StringTable {
             .add(s);
     }
 
-    // Using the string table, parse a URI from the bistream
+    // Using the string table, parse a URI from the bitstream
     // URI partitions are "Optimized for Frequent use of Compact Identifiers" - the
     // compact identifiers are n bit integers where n = ceil(log2(number_of_entries + 1))
     fn parse_uri<'a, 'b>(
         &'b mut self,
-    ) -> impl FnMut(BitInput<'a>) -> IResult<BitInput<'a>, String> + 'b {
+    ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> + 'b {
         move |i| {
             let to_take = ilog2_ceil(self.uris.len() + 1);
             log::debug!(
@@ -137,7 +151,7 @@ impl StringTable {
                 // Miss, what follows is a full uri (string, with length field n+1 where n
                 // is the length of the string)
                 let (rest2, uri) = parse_string_with_len_offset(1)(i)?;
-                log::debug!("parse_uri string table miss, added {} to table", uri);
+                log::debug!("parse uri: miss, adding {}", uri);
                 self.uris.add(URIStringTable::with_uri(uri.clone()));
                 Ok((rest2, uri))
             } else {
@@ -148,13 +162,13 @@ impl StringTable {
                     .get((prefix - 1).try_into().unwrap())
                     .and_then(|u| Some(u.uri.clone()))
                     .unwrap();
-                log::debug!("parse_uri string table hit, got '{}'", u);
+                log::debug!("parse uri: hit, got '{}'", u);
                 Ok((rest, u))
             }
         }
     }
 
-    fn parse_prefix<'a>(&mut self) -> impl FnMut(BitInput<'a>) -> IResult<BitInput<'a>, String> {
+    fn parse_prefix<'a>(&mut self) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> {
         move |i| Ok((i, "fakeprefix".into()))
     }
 
@@ -167,7 +181,7 @@ impl StringTable {
     fn parse_localname<'a, 'b>(
         &'b mut self,
         uri: &'b str,
-    ) -> impl FnMut(BitInput<'a>) -> IResult<BitInput<'a>, String> + 'b {
+    ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> + 'b {
         move |i| {
             let ln = &mut self.uris.find(&uri).unwrap().local_name;
             // Hit - a uint 0 followed by the compact identifier
@@ -178,10 +192,12 @@ impl StringTable {
                 }),
             )(i)
             {
+                log::debug!("parse localname: hit, got {}", s);
                 return Ok((rest, s));
             }
             // Miss - a string with length incremented by 1
             let (rest, s) = parse_string_with_len_offset(1)(i)?;
+            log::debug!("parse localname: miss, adding {}", s);
             ln.add(s.clone());
             Ok((rest, s))
         }
@@ -198,34 +214,41 @@ impl StringTable {
     fn parse_value<'a, 'b>(
         &'b mut self,
         qname: &'b Qname,
-    ) -> impl FnMut(BitInput<'a>) -> IResult<BitInput<'a>, Value> + 'b {
+    ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Value> + 'b {
         move |i| {
             if let Ok((rest1, foo)) = alt((unsigned_int_x(0), unsigned_int_x(1)))(i) {
                 match foo {
                     0 => {
-                        let (rest2, idx) = n_bit_unsigned_int(
-                            self.local_values.get(&qname).unwrap().prefix_length(),
-                            true,
-                        )(rest1)?;
-                        Ok((
-                            rest2,
-                            Rc::as_ref(
-                                self.local_values
-                                    .get(&qname)
-                                    .unwrap()
-                                    .get(idx as usize)
-                                    .unwrap(),
-                            )
-                            .clone(),
-                        ))
+                        let prefix_length = self.local_values.get(&qname).unwrap().prefix_length();
+                        let (rest2, idx) = n_bit_unsigned_int(prefix_length, true)(rest1)?;
+                        let val = Rc::as_ref(
+                            self.local_values
+                                .get(&qname)
+                                .unwrap()
+                                .get(idx as usize)
+                                .unwrap(),
+                        )
+                        .clone();
+                        log::trace!(
+                            "parsed value {:?} from local table, qname {}, prefix {} (len {})",
+                            val,
+                            qname,
+                            idx,
+                            prefix_length
+                        );
+                        Ok((rest2, val))
                     }
                     1 => {
-                        let (rest2, idx) =
-                            n_bit_unsigned_int(self.global_values.prefix_length(), true)(rest1)?;
-                        Ok((
-                            rest2,
-                            Rc::as_ref(self.global_values.get(idx as usize).unwrap()).clone(),
-                        ))
+                        let prefix_length = self.global_values.prefix_length();
+                        let (rest2, idx) = n_bit_unsigned_int(prefix_length, true)(rest1)?;
+                        let val = Rc::as_ref(self.global_values.get(idx as usize).unwrap()).clone();
+                        log::trace!(
+                            "parsed value {:?} from global table, prefix {} (len {})",
+                            val,
+                            idx,
+                            prefix_length
+                        );
+                        Ok((rest2, val))
                     }
                     _ => unreachable!(),
                 }
@@ -350,11 +373,12 @@ impl Version {
     }
 }
 
-fn header<'a>(i: BitInput<'a>) -> IResult<BitInput<'a>, Header> {
+fn header<'a>(i: BitInput<'a>) -> ExiResult<BitInput<'a>, Header> {
     let (rem, (options_present, ver)) = preceded(
         opt(tag(0x24455849, 32usize)),
         preceded(tag(0b10, 2usize), tuple((bool, Version::parse))),
-    )(i)?;
+    )(i)
+    .map_err(nom::Err::convert)?;
     if options_present {
         unimplemented!();
     }
@@ -367,76 +391,124 @@ fn header<'a>(i: BitInput<'a>) -> IResult<BitInput<'a>, Header> {
     ))
 }
 
-fn body(i: BitInput) -> IResult<BitInput, Vec<Event>> {
+// Newtype to make things a bit more ergonomic
+struct GrammarStack(Vec<Rc<RefCell<dyn GrammaryThing>>>);
+impl GrammarStack {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    fn push(&mut self, v: Rc<RefCell<dyn GrammaryThing>>) {
+        self.0.push(v);
+        log::debug!(
+            "Pushed grammar. Stack: {}",
+            self.0
+                .iter()
+                .map(|g| g.deref().borrow().describe())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        self.current().borrow().pprint();
+    }
+
+    fn pop(&mut self) {
+        self.0.pop();
+        log::debug!(
+            "Popped grammar. Stack: {}",
+            self.0
+                .iter()
+                .map(|g| g.deref().borrow().describe())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        self.current().borrow().pprint();
+    }
+
+    fn current(&self) -> &RefCell<dyn GrammaryThing> {
+        self.0.last().unwrap().deref()
+    }
+}
+
+fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
     let state = Rc::new(DecoderState::new());
-    let mut grammar_stack: VecDeque<Rc<RefCell<dyn GrammaryThing>>> = VecDeque::new();
-    grammar_stack.push_front(Rc::new(RefCell::new(DocumentGrammar::new(
+    let mut grammar_stack = GrammarStack::new();
+    grammar_stack.push(Rc::new(RefCell::new(DocumentGrammar::new(
         state.options.clone(),
     ))));
     let mut output = Vec::new();
     let mut input = i;
     loop {
-        let g = &grammar_stack[0];
-        let (rest, event) = g.borrow_mut().parse(input)?;
+        let (rest, event) = grammar_stack.current().borrow_mut().parse(input)?;
         input = rest;
         log::debug!("ParseEvent: {:?}", event);
-        let (rest, parsed_event) = match event {
-            ParseEvent::SD => success(Event::StartDocument)(input)?,
-            ParseEvent::SE => {
-                let (r1, qname) =
-                    qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
-                // Add a SE ( qname ) production to the current grammar
-                grammar_stack[0]
-                    .borrow_mut()
-                    .add_se_specialised(qname.clone());
-                let mut egs = state.element_grammars.borrow_mut();
-                if let Some(eg) = egs.get(&qname) {
-                    grammar_stack.push_front(eg.clone());
-                } else {
-                    log::debug!("creating new global element grammar for qname {:?}", qname);
-                    let ng = Rc::new(RefCell::new(ElementGrammar::new(
-                        qname.clone(),
-                        state.options.clone(),
-                    )));
-                    egs.insert(qname.clone(), ng.clone());
-                    grammar_stack.push_front(ng);
+        let (rest, parsed_event) =
+            match event {
+                ParseEvent::SD => success(Event::StartDocument)(input)?,
+                ParseEvent::SE => {
+                    let (r1, qname) =
+                        qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                    let ev = Event::StartElement {
+                        qname: qname.clone(),
+                    };
+                    // Add a SE ( qname ) production to the current grammar
+                    grammar_stack.current().borrow_mut().specialise(&ev);
+                    let mut egs = state.element_grammars.borrow_mut();
+                    if let Some(eg) = egs.get(&qname) {
+                        eg.borrow_mut().reset();
+                        grammar_stack.push(eg.clone());
+                    } else {
+                        log::debug!("creating new global element grammar for qname {}", qname);
+                        let ng = Rc::new(RefCell::new(ElementGrammar::new(
+                            qname.clone(),
+                            state.options.clone(),
+                        )));
+                        egs.insert(qname, ng.clone());
+                        grammar_stack.push(ng);
+                    }
+                    (r1, ev)
                 }
-                (r1, Event::StartElement { qname })
-            }
-            ParseEvent::CH => {
-                let (r, value) = state
-                    .string_table
-                    .clone()
-                    .borrow_mut()
-                    .parse_value(g.borrow().context_qname().unwrap())(
-                    input
-                )?;
-                (r, Event::Characters { value })
-            }
-            ParseEvent::EE => {
-                grammar_stack.pop_front();
-                success(Event::EndElement)(input)?
-            }
-            ParseEvent::ED => success(Event::EndDocument)(input)?,
-            ParseEvent::AT => {
-                // Parse the qname
-                let (r1, qname) =
-                    qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
-                // Parse the value
-                let (rest, value) =
-                    state
-                        .string_table
-                        .clone()
-                        .borrow_mut()
-                        .parse_value(g.borrow().context_qname().unwrap())(r1)?;
-                // Add to this element's grammar
-                let _ = &grammar_stack[0]
-                    .borrow_mut()
-                    .add_at_specialised(qname.clone());
-                (rest, Event::Attribute { qname, value })
-            }
-            e => unimplemented!("Event {:?} unimplemented", e),
-        };
+                ParseEvent::CH => {
+                    let (r, value) =
+                        state.string_table.clone().borrow_mut().parse_value(
+                            grammar_stack.current().borrow().context_qname().unwrap(),
+                        )(input)?;
+                    let ev = Event::Characters { value };
+                    grammar_stack.current().borrow_mut().specialise(&ev);
+                    (r, ev)
+                }
+                ParseEvent::EE => {
+                    grammar_stack.pop();
+                    success(Event::EndElement)(input)?
+                }
+                ParseEvent::ED => success(Event::EndDocument)(input)?,
+                ParseEvent::AT => {
+                    // Parse the qname
+                    let (r1, qname) =
+                        qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                    // Parse the value
+                    let (rest, value) =
+                        state.string_table.clone().borrow_mut().parse_value(&qname)(r1)?;
+                    let ev = Event::Attribute { qname, value };
+                    // Add to this element's grammar
+                    grammar_stack.current().borrow_mut().specialise(&ev);
+                    (rest, ev)
+                }
+                ParseEvent::ATQname(qname) => {
+                    let (rest, value) =
+                        state.string_table.clone().borrow_mut().parse_value(&qname)(input)?;
+                    (rest, Event::Attribute { qname, value })
+                }
+                ParseEvent::SEQname(qname) => {
+                    let egs = state.element_grammars.borrow_mut();
+                    if let Some(eg) = egs.get(&qname) {
+                        eg.borrow_mut().reset();
+                        grammar_stack.push(eg.clone());
+                    } else {
+                        panic!("SEQname can't exist without a global element grammar for it");
+                    }
+                    (input, Event::StartElement { qname })
+                }
+                e => unimplemented!("Event {:?} unimplemented", e),
+            };
         input = rest;
         log::debug!("output event: {:?}", parsed_event);
         output.push(parsed_event);
@@ -455,7 +527,7 @@ pub struct Stream {
     pub body: Vec<Event>,
 }
 
-fn stream<'a>(i: BitInput<'a>) -> IResult<BitInput<'a>, Stream> {
+fn stream<'a>(i: BitInput<'a>) -> ExiResult<BitInput<'a>, Stream> {
     let (rest, header) = header(i)?;
     log::info!(
         "Read EXI header, version {:?}, options: {:?}",
@@ -464,7 +536,7 @@ fn stream<'a>(i: BitInput<'a>) -> IResult<BitInput<'a>, Stream> {
     );
     let (rest2, body) = body(rest)?;
     // Clean up any trailing bits
-    let (rest3, trailing) = trailing_bits(rest2)?;
+    let (rest3, trailing) = trailing_bits(rest2).map_err(nom::Err::convert)?;
     if trailing != 0 {
         log::warn!("input had non-zero trailing bits!");
     }
@@ -473,137 +545,12 @@ fn stream<'a>(i: BitInput<'a>) -> IResult<BitInput<'a>, Stream> {
 
 /// Decode an EXI stream from input `i`.
 pub fn decode(i: &[u8]) -> Result<Stream, Box<dyn std::error::Error>> {
-    // lol
-    let (rest, s) = bits::<_, _, Error<(&[u8], usize)>, Error<&[u8]>, _>(all_consuming(stream))(i)
-        .map_err(|e| e.to_owned())?;
-    assert_eq!(rest.len(), 0);
+    // "Lovely" little nested map to allow us to return unused input with a different
+    // lifetime to `i``
+    let (_, s) =
+        bits::<_, _, ExiError<(&[u8], usize)>, ExiError<&[u8]>, _>(all_consuming(stream))(i)
+            .map_err(|e| e.map(|e2| e2.map_input(|i| i.to_owned())))?;
     Ok(s)
-}
-
-// Describes the tree of event codes in an EXI grammar.
-// `CodeTree<T>`s always:
-// - Consist of 1+ levels
-// - Each level having 0+ left `T`s
-// - And have exactly one right entry, which is either another CodeTree, or a terminal `T``
-#[derive(Clone, PartialEq, Debug)]
-enum CodeTree<T: Clone> {
-    Terminal(T),
-    Node {
-        left: Vec<T>,
-        right: Rc<CodeTree<T>>,
-    },
-}
-
-impl<T: Clone> CodeTree<T> {
-    // Convenience function to build a codetree from a series of vecs, with each vec
-    // containing elements to add at a "layer" of the codetree.
-    fn from_vecs(mut vecs: Vec<Vec<T>>) -> Self {
-        let this = vecs.remove(0);
-        let islast = vecs.is_empty();
-        match (this.len(), islast) {
-            (l @ _, false) => CodeTree::Node {
-                left: this,
-                right: Rc::new(CodeTree::from_vecs(vecs)),
-            },
-            (0, true) => {
-                panic!("Trailing 0-length codetree layers are invalid")
-            }
-            (1, true) => CodeTree::Node {
-                left: vec![],
-                right: Rc::new(CodeTree::Terminal(this[0].to_owned())),
-            },
-            (l @ 2.., true) => CodeTree::Node {
-                left: this[0..l - 1].to_owned(),
-                right: Rc::new(CodeTree::Terminal(this[l - 1].to_owned())),
-            },
-        }
-    }
-}
-
-impl<T: Clone> CodeTree<T> {
-    fn len(&self) -> Vec<usize> {
-        match self {
-            Self::Terminal(_) => {
-                vec![1]
-            }
-            Self::Node { left, right } => {
-                let slen = left.len() + 1;
-                if let Self::Terminal(_) = right.as_ref() {
-                    vec![slen]
-                } else {
-                    let mut v = right.len();
-                    v.insert(0, slen);
-                    v
-                }
-            }
-        }
-    }
-
-    // The minimum number of bits needed to represent each component of the code
-    // For a code with lengths (2, 3) this would be (1, 2). If the code has just one
-    // terminal, thus having a length (1,), the bits required would be (0,) - a single
-    // possiblity is encoded in 0 bits.
-    fn bits(&self) -> Vec<u32> {
-        self.len().into_iter().map(ilog2_ceil).collect()
-    }
-
-    // Insert an element at the index described by `index`. Returns a copy of codetree
-    // with the element inserted
-    fn insert(&mut self, index: usize, v: T) -> Self {
-        match (self, index) {
-            // Turn a terminal into a node, adding to the left
-            (CodeTree::Terminal(i), 0) => CodeTree::Node {
-                left: vec![v],
-                right: Rc::new(CodeTree::Terminal(i.clone())),
-            },
-            // Turn a terminal into a node, adding to the right
-            (CodeTree::Terminal(i), 1) => CodeTree::Node {
-                left: vec![i.clone()],
-                right: Rc::new(CodeTree::Terminal(v)),
-            },
-            // Given a terminal is just one node, any other insert index is invalid
-            (CodeTree::Terminal(_), _) => panic!("Can't insert"),
-            // Modify a node, inserting somewhere in the left hand side
-            (CodeTree::Node { left, right }, idx) => {
-                if index > left.len() {
-                    panic!("can't insert");
-                }
-                let mut l = left.clone();
-                l.insert(idx, v);
-                CodeTree::Node {
-                    left: left.clone(),
-                    right: right.clone(),
-                }
-            }
-        }
-    }
-}
-
-impl<T: Clone> CodeTree<T> {
-    // Given this codetree, produce the next event from bitstream i
-    fn parse<'a>(&self, i: BitInput<'a>) -> IResult<BitInput<'a>, T> {
-        match self {
-            // If we only have one entry there's only one possiblity
-            CodeTree::Terminal(e) => {
-                log::debug!("codetree parsed terminal, no input consumed");
-                Ok((i, e.clone()))
-            }
-            // we have multiple entries - parse the number of bits needed and return the
-            // matching one
-            CodeTree::Node { left, right } => {
-                let bits = self.bits()[0];
-                log::debug!("codetree getting {}-bit prefix", bits);
-                let (rest, idx): (_, usize) = take(bits)(i)?;
-                if idx == left.len() {
-                    right.parse(rest)
-                } else if idx < left.len() {
-                    Ok((rest, left.get(idx).unwrap().clone()))
-                } else {
-                    panic!("Bad index {} for len {}", idx, self.len()[0]);
-                }
-            }
-        }
-    }
 }
 
 // The state of the decoder. Includes the EXI header options (immutable) and string table
@@ -644,6 +591,30 @@ enum ParseEvent {
     DT,
     ER,
     SC,
+}
+
+impl Display for ParseEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::SD => "SD",
+            Self::ED => "ED",
+            Self::SEQname(q) => &format!("SE ( {} )", q),
+            Self::SEUri => "SE (uri:*)", // TODO: implement when seuri implemented
+            Self::SE => "SE",
+            Self::EE => "EE",
+            Self::ATQname(q) => &format!("AT ( {} )", q),
+            Self::ATUri => "AT (uri:*)", // TODO: implement when aturi implemented
+            Self::AT => "AT",
+            Self::CH => "CH",
+            Self::NS => "NS",
+            Self::CM => "CM",
+            Self::PI => "PI",
+            Self::DT => "DT",
+            Self::ER => "ER",
+            Self::SC => "SC",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 #[cfg(test)]
@@ -692,137 +663,7 @@ mod tests {
     //             panic!("{}", e);
     //         }
     //     }
-    // }
-
-    #[test]
-    fn test_code_tree_len_bits() {
-        let t = CodeTree::Node {
-            left: vec![Event::EndElement],
-            right: Rc::new(CodeTree::Terminal(Event::EndDocument)),
-        };
-        assert_eq!(t.len(), vec!(2));
-        assert_eq!(t.bits(), vec!(1));
-
-        let t = CodeTree::Terminal(Event::EndDocument);
-        assert_eq!(t.len(), vec!(1));
-        assert_eq!(t.bits(), vec!(0));
-
-        let t = CodeTree::Node {
-            left: vec![Event::EndDocument, Event::EndDocument, Event::EndDocument],
-            right: Rc::new(CodeTree::Node {
-                left: vec![Event::EndDocument],
-                right: Rc::new(CodeTree::Node {
-                    left: vec![Event::EndDocument, Event::EndDocument],
-                    right: Rc::new(CodeTree::Terminal(Event::EndDocument)),
-                }),
-            }),
-        };
-        assert_eq!(t.len(), vec!(4, 2, 3));
-        assert_eq!(t.bits(), vec! {2, 1, 2});
-    }
-
-    #[test]
-    fn test_codetree_parse() {
-        // Simple, 0-bit case.
-        assert_eq!(
-            CodeTree::Terminal(1).parse((&[0b1010_1010], 0)),
-            Ok(((vec!(0b1010_1010u8).as_slice(), 0), 1))
-        );
-        // 1-bit cases
-        assert_eq!(
-            CodeTree::Node {
-                left: vec!(1),
-                right: Rc::new(CodeTree::Terminal(2))
-            }
-            .parse((&[0b0000_0000], 0)),
-            Ok(((vec!(0b0000_0000).as_slice(), 1), 1))
-        );
-        assert_eq!(
-            CodeTree::Node {
-                left: vec!(1),
-                right: Rc::new(CodeTree::Terminal(2))
-            }
-            .parse((&[0b1000_0000], 0)),
-            Ok(((vec!(0b1000_0000).as_slice(), 1), 2))
-        );
-        // 2-bit case
-        assert_eq!(
-            CodeTree::Node {
-                left: vec!(1, 2),
-                right: Rc::new(CodeTree::Terminal(3))
-            }
-            .parse((&[0b0100_0000], 0)),
-            Ok(((vec!(0b0100_0000).as_slice(), 2), 2))
-        );
-
-        // (0,1)-bit case
-        assert_eq!(
-            CodeTree::Node {
-                left: vec!(),
-                right: Rc::new(CodeTree::Node {
-                    left: vec!(1),
-                    right: Rc::new(CodeTree::Terminal(2)),
-                })
-            }
-            .parse((&[0b1000_0000], 0)),
-            Ok(((vec!(0b1000_0000).as_slice(), 1), 2))
-        );
-        // (2,2)-bit case
-        assert_eq!(
-            CodeTree::Node {
-                left: vec!(1, 2, 3),
-                right: Rc::new(CodeTree::Node {
-                    left: vec!(4, 5, 6),
-                    right: Rc::new(CodeTree::Terminal(7)),
-                })
-            }
-            .parse((&[0b1110_0000], 0)),
-            Ok(((vec!(0b1110_0000).as_slice(), 4), 6))
-        );
-    }
-
-    #[test]
-    fn test_codetree_from_vecs() {
-        assert_eq!(
-            CodeTree::from_vecs(vec!(vec!(1, 2))),
-            CodeTree::Node {
-                left: vec!(1),
-                right: Rc::new(CodeTree::Terminal(2)),
-            },
-        );
-        assert_eq!(
-            CodeTree::from_vecs(vec!(vec!(1, 2, 3))),
-            CodeTree::Node {
-                left: vec!(1, 2),
-                right: Rc::new(CodeTree::Terminal(3)),
-            },
-        );
-
-        assert_eq!(
-            CodeTree::from_vecs(vec!(vec!(1, 2), vec!(3))),
-            CodeTree::Node {
-                left: vec!(1, 2),
-                right: Rc::new(CodeTree::Node {
-                    left: vec!(),
-                    right: Rc::new(CodeTree::Terminal(3))
-                })
-            }
-        );
-
-        assert_eq!(
-            CodeTree::from_vecs(vec!(vec!(1), vec!(), vec!(3, 4))),
-            CodeTree::Node {
-                left: vec!(1),
-                right: Rc::new(CodeTree::Node {
-                    left: vec!(),
-                    right: Rc::new(CodeTree::Node {
-                        left: vec!(3),
-                        right: Rc::new(CodeTree::Terminal(4)),
-                    }),
-                })
-            }
-        );
-    }
+    //
 
     #[test]
     fn helloworld() -> Result<(), Box<dyn std::error::Error>> {

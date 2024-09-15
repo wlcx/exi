@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::RangeBounds, rc::Rc};
+use std::{cell::RefCell, fmt::Display, ops::RangeBounds, rc::Rc};
 
 use nom::{
     bits::complete::{bool, tag, take},
@@ -9,12 +9,15 @@ use nom::{
     IResult, Parser,
 };
 
-use crate::util::{bound_values, lower_bound, BitInput};
+use crate::{
+    decoder::errors::{make_exierror, ExiErrorKind},
+    util::{bound_values, lower_bound, BitInput},
+};
 
-use super::StringTable;
+use super::{ExiResult, StringTable};
 
 // https://www.w3.org/TR/exi/#encodingBinary
-fn binary(i: BitInput) -> IResult<BitInput, Vec<u8>> {
+fn binary(i: BitInput) -> ExiResult<BitInput, Vec<u8>> {
     let (rest, len) = unsigned_int(i)?;
     count(take(8usize), usize::try_from(len).unwrap())(rest)
 }
@@ -27,7 +30,7 @@ enum XsdBool {
 }
 
 // https://www.w3.org/TR/exi/#encodingBoolean
-fn xsd_boolean(i: BitInput) -> IResult<BitInput, XsdBool> {
+fn xsd_boolean(i: BitInput) -> ExiResult<BitInput, XsdBool> {
     map(n_bit_unsigned_int(2, true), |b: u64| match b {
         0 => XsdBool::False,
         1 => XsdBool::Zero,
@@ -38,7 +41,7 @@ fn xsd_boolean(i: BitInput) -> IResult<BitInput, XsdBool> {
 }
 
 // https://www.w3.org/TR/exi/#encodingBoolean
-fn boolean(i: BitInput) -> IResult<BitInput, bool> {
+fn boolean(i: BitInput) -> ExiResult<BitInput, bool> {
     bool(i)
 }
 
@@ -62,7 +65,7 @@ impl Into<String> for Decimal {
 }
 
 // https://www.w3.org/TR/exi/#encodingDecimal
-fn decimal(i: BitInput) -> IResult<BitInput, Decimal> {
+fn decimal(i: BitInput) -> ExiResult<BitInput, Decimal> {
     let (next, negative) = boolean(i)?;
     let f = map(
         tuple((unsigned_int, unsigned_int)),
@@ -76,12 +79,12 @@ fn decimal(i: BitInput) -> IResult<BitInput, Decimal> {
 }
 
 // https://www.w3.org/TR/exi/#encodingFloat
-fn float(i: BitInput) -> IResult<BitInput, f64> {
+fn float(i: BitInput) -> ExiResult<BitInput, f64> {
     unimplemented!()
 }
 
 // https://www.w3.org/TR/exi/#encodingInteger
-fn integer<B>(bound: Option<B>) -> impl FnMut(BitInput) -> IResult<BitInput, i64>
+fn integer<B>(bound: Option<B>) -> impl FnMut(BitInput) -> ExiResult<BitInput, i64>
 where
     B: RangeBounds<i64>,
 {
@@ -115,7 +118,7 @@ where
 }
 
 // Parse an exact unsigned int
-pub fn unsigned_int_x(x: usize) -> impl FnMut(BitInput) -> IResult<BitInput, usize> {
+pub fn unsigned_int_x(x: usize) -> impl FnMut(BitInput) -> ExiResult<BitInput, usize> {
     if x > 128 {
         unimplemented!("Can only do single-byte matches currently.")
     }
@@ -123,7 +126,7 @@ pub fn unsigned_int_x(x: usize) -> impl FnMut(BitInput) -> IResult<BitInput, usi
 }
 
 // https://www.w3.org/TR/exi/#encodingUnsignedInteger
-pub fn unsigned_int(i: BitInput) -> IResult<BitInput, u64> {
+pub fn unsigned_int(i: BitInput) -> ExiResult<BitInput, u64> {
     let mut value = 0u64;
     let mut multiplier = 1u64;
     let mut rem = i;
@@ -144,6 +147,16 @@ pub struct Qname {
     uri: String,
     local_name: String,
     prefix: Option<String>,
+}
+
+impl Display for Qname {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = String::new();
+        if self.uri != "" {
+            out += &format!("{}:", self.uri);
+        }
+        write!(f, "{}{}", out, self.local_name)
+    }
 }
 
 impl From<&str> for Qname {
@@ -169,7 +182,7 @@ impl PartialEq for Qname {
 pub fn qname<'a, 'b>(
     st: Rc<RefCell<StringTable>>,
     preserve_prefix: bool,
-) -> impl Fn(BitInput<'a>) -> IResult<BitInput<'a>, Qname> {
+) -> impl Fn(BitInput<'a>) -> ExiResult<BitInput<'a>, Qname> {
     move |i| {
         // FIXME: can these borrow_muts be tidied up?
         let (r, uri) = st.borrow_mut().parse_uri()(i)?;
@@ -197,10 +210,10 @@ pub fn qname<'a, 'b>(
     }
 }
 
-struct DateTime {}
+pub struct DateTime {}
 
 // https://www.w3.org/TR/exi/#encodingDateTime
-pub fn datetime(i: BitInput) -> IResult<BitInput, DateTime> {
+pub fn datetime(_i: BitInput) -> ExiResult<BitInput, DateTime> {
     unimplemented!();
 }
 
@@ -208,7 +221,7 @@ pub fn datetime(i: BitInput) -> IResult<BitInput, DateTime> {
 pub fn n_bit_unsigned_int(
     n: u32,
     bitpacked: bool,
-) -> impl FnMut(BitInput) -> IResult<BitInput, u64> {
+) -> impl FnMut(BitInput) -> ExiResult<BitInput, u64> {
     move |i| {
         if !bitpacked {
             return unsigned_int(i);
@@ -218,13 +231,13 @@ pub fn n_bit_unsigned_int(
 }
 
 // https://www.w3.org/TR/exi/#encodingString
-pub fn string(i: BitInput) -> IResult<BitInput, String> {
+pub fn string(i: BitInput) -> ExiResult<BitInput, String> {
     parse_string_with_len_offset(0)(i)
 }
 
 pub fn parse_string_with_len_offset(
     len_offset: u8,
-) -> impl FnMut(BitInput) -> IResult<BitInput, String> {
+) -> impl FnMut(BitInput) -> ExiResult<BitInput, String> {
     // FIXME: restricted character sets (https://www.w3.org/TR/exi/#restrictedCharSet)
     move |i| {
         let (rem, mut len) = unsigned_int(i)?;
@@ -244,7 +257,7 @@ pub fn parse_string_with_len_offset(
             .map(u32::try_from)
             .collect::<Result<_, _>>()
             // TODO: this error handling is cheesy, we should have custom types really
-            .map_err(|_| nom::Err::Failure(make_error(rem, ErrorKind::Count)))?;
+            .map_err(|_| nom::Err::Failure(make_exierror(i, ExiErrorKind::BadString)))?;
         // FIXME: Currently this drops invalid codepoints silently, we should instead return
         // an error
         let s = codepoints
@@ -257,13 +270,13 @@ pub fn parse_string_with_len_offset(
 }
 
 // A function which parses an EXI datatype
-type TypeParser<'a, O> = fn(BitInput<'a>) -> IResult<BitInput<'a>, O>;
+type TypeParser<'a, O> = fn(BitInput<'a>) -> ExiResult<BitInput<'a>, O>;
 
 // https://www.w3.org/TR/exi/#encodingList
 // Parse an EXI-encoded list with the type parser `tp`
 fn parse_list<'a, F, O>(
     tp: TypeParser<'a, O>,
-) -> impl FnMut(BitInput<'a>) -> IResult<BitInput<'a>, Vec<O>>
+) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Vec<O>>
 where
     F: Parser<BitInput<'a>, O, Error<BitInput<'a>>>,
 {
@@ -311,8 +324,8 @@ impl Into<String> for Value {
 mod tests {
     use super::*;
 
-    fn check_failure_contents<I: PartialEq + std::fmt::Debug, O: std::fmt::Debug>(
-        r: IResult<I, O>,
+    fn check_failure_contents<I: Clone + PartialEq + std::fmt::Debug, O: std::fmt::Debug>(
+        r: ExiResult<I, O>,
         v: I,
     ) {
         match r {
