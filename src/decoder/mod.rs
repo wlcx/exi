@@ -287,60 +287,53 @@ impl Default for StringTable {
     }
 }
 
-/// Events representing the structure and content of XML, decoded from an EXI stream
+/// Events representing the structure and content of XML, decoded from an EXI stream.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    StartDocument, // SD
-    EndDocument,   // ED
-    StartElementQname {
-        prefix: Option<String>,
-    }, // SE ( qname )
-    StartElementUri {
-        local_name: String,
-        prefix: Option<String>,
-    }, // SE ( uri:* )
-    StartElement {
-        qname: Qname,
-    }, // SE ( * )
-    EndElement,    // EE
-    AttributeQname {
-        prefix: Option<String>,
-        value: Value,
-    }, // AT ( qname )
-    AttributeUri {
-        local_name: String,
-        prefix: Option<String>,
-        value: Value,
-    }, // AT ( uri:* )
-    Attribute {
-        qname: Qname,
-        value: Value,
-    }, // AT ( * )
-    Characters {
-        value: Value,
-    }, // CH
+    /// Start of the document.
+    StartDocument,
+    /// End of the document.
+    EndDocument,
+    /// Start of an element, with the given [`Qname`].
+    StartElement(Qname),
+    /// End of the current element.
+    EndElement,
+    /// An attribute, with the given [`Qname`] and [`Value`]
+    Attribute { qname: Qname, value: Value },
+    /// Some characters, representing the given [`Value`]
+    Characters(Value),
+    /// A namespace, mapping from the given uri to the given prefix.
     NamespaceDeclaration {
         uri: String,
         prefix: String,
         local_e_ns: bool,
-    }, // NS
-    Comment {
-        text: String,
-    }, // CM
-    ProcessingInstruction {
-        name: String,
-        text: String,
-    }, // PI
+    },
+    /// A comment node.
+    ///
+    /// For example: `<!-- This is a comment -->`
+    Comment(String),
+    /// A processing instruction node.
+    ///
+    /// For example: `<?xml-stylesheet type="text/xsl" href="style.xsl"?>`
+    ProcessingInstruction { name: String, text: String },
+    /// A doctype node.
+    ///
+    /// For example:
+    /// ```xml
+    /// <!DOCTYPE html PUBLIC
+    /// "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    /// "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+    /// ```
     Doctype {
         name: String,
         public: String,
         system: String,
         text: String,
-    }, // DT
-    EntityReference {
-        name: String,
-    }, // ER
-    SelfContained, // SC
+    },
+    /// An entity reference to the given entity name.
+    EntityReference(String),
+    /// Indicates that the element is self-contained
+    SelfContained,
 }
 
 /// The EXI format version
@@ -445,9 +438,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                 ParseEvent::SE => {
                     let (r1, qname) =
                         qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
-                    let ev = Event::StartElement {
-                        qname: qname.clone(),
-                    };
+                    let ev = Event::StartElement(qname.clone());
                     // Add a SE ( qname ) production to the current grammar
                     grammar_stack.current().borrow_mut().specialise(&ev);
                     let mut egs = state.element_grammars.borrow_mut();
@@ -470,7 +461,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                         state.string_table.clone().borrow_mut().parse_value(
                             grammar_stack.current().borrow().context_qname().unwrap(),
                         )(input)?;
-                    let ev = Event::Characters { value };
+                    let ev = Event::Characters(value);
                     grammar_stack.current().borrow_mut().specialise(&ev);
                     (r, ev)
                 }
@@ -504,7 +495,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                     } else {
                         panic!("SEQname can't exist without a global element grammar for it");
                     }
-                    (input, Event::StartElement { qname })
+                    (input, Event::StartElement(qname))
                 }
                 e => unimplemented!("Event {:?} unimplemented", e),
             };
@@ -571,7 +562,7 @@ impl DecoderState {
 }
 
 // Each of the possible things an event code can be mapped to. Corresponds to members of
-// the Event enum.
+// the Event enum, just without associated data.
 #[derive(Clone, Debug)]
 enum ParseEvent {
     SD,
@@ -676,12 +667,8 @@ mod tests {
             s.body,
             vec!(
                 Event::StartDocument,
-                Event::StartElement {
-                    qname: "hello".into()
-                },
-                Event::Characters {
-                    value: "world".into()
-                },
+                Event::StartElement("hello".into()),
+                Event::Characters("world".into()),
                 Event::EndElement,
                 Event::EndDocument,
             )
@@ -701,16 +688,12 @@ mod tests {
             s.body,
             vec!(
                 Event::StartDocument,
-                Event::StartElement {
-                    qname: "notebook".into()
-                },
+                Event::StartElement("notebook".into()),
                 Event::Attribute {
                     qname: "date".into(),
                     value: "2007-09-12".into()
                 },
-                Event::StartElement {
-                    qname: "note".into()
-                },
+                Event::StartElement("note".into()),
                 Event::Attribute {
                     qname: "category".into(),
                     value: "EXI".into()
@@ -719,41 +702,23 @@ mod tests {
                     qname: "date".into(),
                     value: "2007-07-23".into()
                 },
-                Event::StartElement {
-                    qname: "subject".into()
-                },
-                Event::Characters {
-                    value: "EXI".into()
-                },
+                Event::StartElement("subject".into()),
+                Event::Characters("EXI".into()),
                 Event::EndElement,
-                Event::StartElement {
-                    qname: "body".into()
-                },
-                Event::Characters {
-                    value: "Do not forget it!".into()
-                },
+                Event::StartElement("body".into()),
+                Event::Characters("Do not forget it!".into()),
                 Event::EndElement,
                 Event::EndElement,
-                Event::StartElement {
-                    qname: "note".into()
-                },
+                Event::StartElement("note".into()),
                 Event::Attribute {
                     qname: "date".into(),
                     value: "2007-09-12".into()
                 },
-                Event::StartElement {
-                    qname: "subject".into()
-                },
-                Event::Characters {
-                    value: "Shopping List".into()
-                },
+                Event::StartElement("subject".into()),
+                Event::Characters("Shopping List".into()),
                 Event::EndElement,
-                Event::StartElement {
-                    qname: "body".into()
-                },
-                Event::Characters {
-                    value: "milk, honey".into()
-                },
+                Event::StartElement("body".into()),
+                Event::Characters("milk, honey".into()),
                 Event::EndElement,
                 Event::EndElement,
                 Event::EndElement,

@@ -348,7 +348,7 @@ impl GrammaryThing for ElementGrammar {
 
     fn specialise(&mut self, ev: &Event) {
         match (ev, self.current_subgrammar) {
-            (Event::StartElement { qname }, current) => {
+            (Event::StartElement(qname), current) => {
                 let new = (
                     ParseEvent::SEQname(qname.clone()),
                     Some(ElementSubgrammar::ElementContent),
