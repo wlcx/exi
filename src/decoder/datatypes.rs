@@ -144,9 +144,9 @@ pub fn unsigned_int(i: BitInput) -> ExiResult<BitInput, u64> {
 
 #[derive(Debug, Clone, Hash, Eq)]
 pub struct Qname {
-    uri: String,
-    local_name: String,
-    prefix: Option<String>,
+    pub uri: String,
+    pub local_name: String,
+    pub prefix: Option<String>,
 }
 
 impl Display for Qname {
@@ -159,7 +159,24 @@ impl Display for Qname {
     }
 }
 
+impl Qname {
+    pub fn to_string(self) -> String {
+        if let Some(p) = self.prefix {
+            [p, self.local_name].join(":").into()
+        } else if !self.uri.is_empty() {
+            [self.uri, self.local_name].join(":").into()
+        } else {
+            self.local_name.into()
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
+}
+
 impl From<&str> for Qname {
+    // TODO: bit risky, it assumes there's no prefix or uri.
     fn from(value: &str) -> Self {
         Qname {
             uri: "".into(),
@@ -302,6 +319,12 @@ pub enum Value {
 impl From<&str> for Value {
     fn from(value: &str) -> Self {
         Self::String(value.into())
+    }
+}
+
+impl Value {
+    pub fn to_string(self) -> String {
+        self.into()
     }
 }
 
