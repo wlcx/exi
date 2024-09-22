@@ -144,9 +144,9 @@ pub fn unsigned_int(i: BitInput) -> ExiResult<BitInput, u64> {
 
 #[derive(Debug, Clone, Eq)]
 pub struct Qname {
-    uri: String,
-    local_name: String,
-    prefix: Option<String>,
+    pub uri: String,
+    pub local_name: String,
+    pub prefix: Option<String>,
 }
 
 impl Display for Qname {
@@ -159,7 +159,24 @@ impl Display for Qname {
     }
 }
 
+impl Qname {
+    pub fn into_string(self) -> String {
+        if let Some(p) = self.prefix {
+            [p, self.local_name].join(":")
+        } else if !self.uri.is_empty() {
+            [self.uri, self.local_name].join(":")
+        } else {
+            self.local_name
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
+}
+
 impl From<&str> for Qname {
+    // TODO: bit risky, it assumes there's no prefix or uri.
     fn from(value: &str) -> Self {
         Qname {
             uri: "".into(),
@@ -281,12 +298,9 @@ type TypeParser<'a, O> = fn(BitInput<'a>) -> ExiResult<BitInput<'a>, O>;
 
 // https://www.w3.org/TR/exi/#encodingList
 // Parse an EXI-encoded list with the type parser `tp`
-fn parse_list<'a, F, O>(
+fn parse_list<'a, O>(
     tp: TypeParser<'a, O>,
-) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Vec<O>>
-where
-    F: Parser<BitInput<'a>, O, Error<BitInput<'a>>>,
-{
+) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Vec<O>> {
     move |i: BitInput<'a>| {
         let (rest, len) = unsigned_int(i)?;
         count(tp, len.try_into().unwrap())(rest)
