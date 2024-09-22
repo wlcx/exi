@@ -3,6 +3,7 @@ mod datatypes;
 mod errors;
 mod grammars;
 mod options;
+pub mod quickxml;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
