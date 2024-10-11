@@ -19,7 +19,7 @@ pub(super) enum ExiErrorKind {
 }
 
 pub(super) fn make_exierror<I>(input: I, kind: ExiErrorKind) -> ExiError<I> {
-    ExiError { input, kind: kind }
+    ExiError { input, kind }
 }
 
 impl<I> ExiError<I> {

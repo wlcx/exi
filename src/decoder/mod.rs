@@ -4,9 +4,8 @@ mod errors;
 mod grammars;
 mod options;
 
-use std::borrow::Borrow;
-use std::cell::{Ref, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Deref, Index, IndexMut};
 use std::rc::Rc;
@@ -160,7 +159,7 @@ impl StringTable {
                 let u = self
                     .uris
                     .get((prefix - 1).try_into().unwrap())
-                    .and_then(|u| Some(u.uri.clone()))
+                    .map(|u| u.uri.clone())
                     .unwrap();
                 log::debug!("parse uri: hit, got '{}'", u);
                 Ok((rest, u))
@@ -183,7 +182,7 @@ impl StringTable {
         uri: &'b str,
     ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> + 'b {
         move |i| {
-            let ln = &mut self.uris.find(&uri).unwrap().local_name;
+            let ln = &mut self.uris.find(uri).unwrap().local_name;
             // Hit - a uint 0 followed by the compact identifier
             if let Ok((rest, s)) = preceded(
                 unsigned_int_x(0),
@@ -216,14 +215,14 @@ impl StringTable {
         qname: &'b Qname,
     ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Value> + 'b {
         move |i| {
-            if let Ok((rest1, foo)) = alt((unsigned_int_x(0), unsigned_int_x(1)))(i) {
-                match foo {
+            if let Ok((rest1, local_or_global)) = alt((unsigned_int_x(0), unsigned_int_x(1)))(i) {
+                match local_or_global {
                     0 => {
-                        let prefix_length = self.local_values.get(&qname).unwrap().prefix_length();
+                        let prefix_length = self.local_values.get(qname).unwrap().prefix_length();
                         let (rest2, idx) = n_bit_unsigned_int(prefix_length, true)(rest1)?;
                         let val = Rc::as_ref(
                             self.local_values
-                                .get(&qname)
+                                .get(qname)
                                 .unwrap()
                                 .get(idx as usize)
                                 .unwrap(),
@@ -373,7 +372,7 @@ impl Version {
     }
 }
 
-fn header<'a>(i: BitInput<'a>) -> ExiResult<BitInput<'a>, Header> {
+fn header(i: BitInput) -> ExiResult<BitInput, Header> {
     let (rem, (options_present, ver)) = preceded(
         opt(tag(0x24455849, 32usize)),
         preceded(tag(0b10, 2usize), tuple((bool, Version::parse))),
@@ -527,7 +526,7 @@ pub struct Stream {
     pub body: Vec<Event>,
 }
 
-fn stream<'a>(i: BitInput<'a>) -> ExiResult<BitInput<'a>, Stream> {
+fn stream(i: BitInput) -> ExiResult<BitInput, Stream> {
     let (rest, header) = header(i)?;
     log::info!(
         "Read EXI header, version {:?}, options: {:?}",

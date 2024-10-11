@@ -1,12 +1,12 @@
-use std::{cell::RefCell, fmt::Display, ops::RangeBounds, rc::Rc};
+use std::{cell::RefCell, fmt::Display, hash::Hash, ops::RangeBounds, rc::Rc};
 
 use nom::{
     bits::complete::{bool, tag, take},
     combinator::{map, verify},
-    error::{make_error, Error, ErrorKind},
+    error::Error,
     multi::count,
     sequence::tuple,
-    IResult, Parser,
+    Parser,
 };
 
 use crate::{
@@ -46,20 +46,20 @@ fn boolean(i: BitInput) -> ExiResult<BitInput, bool> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Decimal {
+pub struct Decimal {
     negative: bool,
     integral: u64,
     // TODO: when turning into string, fractional is reversed
     fractional: u64,
 }
 
-impl Into<String> for Decimal {
-    fn into(self) -> String {
+impl From<Decimal> for String {
+    fn from(value: Decimal) -> Self {
         let mut out = String::new();
-        if self.negative {
+        if value.negative {
             out += "-";
         }
-        out += &format!("{}.{}", self.integral, self.fractional.reverse_bits());
+        out += &format!("{}.{}", value.integral, value.fractional.reverse_bits());
         out
     }
 }
@@ -67,7 +67,7 @@ impl Into<String> for Decimal {
 // https://www.w3.org/TR/exi/#encodingDecimal
 fn decimal(i: BitInput) -> ExiResult<BitInput, Decimal> {
     let (next, negative) = boolean(i)?;
-    let f = map(
+    let x = map(
         tuple((unsigned_int, unsigned_int)),
         |(integral, fractional)| Decimal {
             negative,
@@ -75,7 +75,7 @@ fn decimal(i: BitInput) -> ExiResult<BitInput, Decimal> {
             fractional,
         },
     )(next);
-    f
+    x
 }
 
 // https://www.w3.org/TR/exi/#encodingFloat
@@ -142,7 +142,7 @@ pub fn unsigned_int(i: BitInput) -> ExiResult<BitInput, u64> {
     Ok((rem, value))
 }
 
-#[derive(Debug, Clone, Hash, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Qname {
     uri: String,
     local_name: String,
@@ -152,7 +152,7 @@ pub struct Qname {
 impl Display for Qname {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = String::new();
-        if self.uri != "" {
+        if !self.uri.is_empty() {
             out += &format!("{}:", self.uri);
         }
         write!(f, "{}{}", out, self.local_name)
@@ -174,12 +174,19 @@ impl PartialEq for Qname {
     // regardless of their prefix values."
     // TODO: verify that this actually works for us
     fn eq(&self, other: &Self) -> bool {
-        return self.uri == other.uri && self.local_name == other.local_name;
+        self.uri == other.uri && self.local_name == other.local_name
+    }
+}
+
+impl Hash for Qname {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.uri.hash(state);
+        self.local_name.hash(state);
     }
 }
 
 // https://www.w3.org/TR/exi/#encodingQName
-pub fn qname<'a, 'b>(
+pub fn qname<'a>(
     st: Rc<RefCell<StringTable>>,
     preserve_prefix: bool,
 ) -> impl Fn(BitInput<'a>) -> ExiResult<BitInput<'a>, Qname> {
@@ -305,9 +312,9 @@ impl From<&str> for Value {
     }
 }
 
-impl Into<String> for Value {
-    fn into(self) -> String {
-        match self {
+impl From<Value> for String {
+    fn from(value: Value) -> Self {
+        match value {
             Value::Binary(_) => unimplemented!(),
             Value::Boolean(b) => (if b { "true" } else { "false" }).into(),
             Value::DateTime(_) => unimplemented!(),

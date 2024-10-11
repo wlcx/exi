@@ -1,6 +1,8 @@
 #[derive(Debug, PartialEq)]
 pub enum Alignment {
     BitPacked,
+    // Shh clippy, we're using the wording from the spec here.
+    #[allow(clippy::enum_variant_names)]
     ByteAlignment,
     PreCompression,
 }

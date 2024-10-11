@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use nom::bits::complete::take;
 use nom::IResult;
 
@@ -162,12 +164,10 @@ impl<T: Clone> CodeTree<T> {
                 let bits = self.bits()[0];
                 let (rest, idx): (_, usize) = take(bits)(i)?;
                 log::trace!("codetree parsed {}-bit prefix, value: {}", bits, idx);
-                if idx == left.len() {
-                    right.parse(rest)
-                } else if idx < left.len() {
-                    Ok((rest, left.get(idx).unwrap().clone()))
-                } else {
-                    panic!("Bad index {} for len {}", idx, self.len()[0]);
+                match idx.cmp(&left.len()) {
+                    Ordering::Equal => right.parse(rest),
+                    Ordering::Less => Ok((rest, left.get(idx).unwrap().clone())),
+                    _ => panic!("Bad index {} for len {}", idx, self.len()[0]),
                 }
             }
         }

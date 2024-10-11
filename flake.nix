@@ -43,7 +43,7 @@
         };
       in
         pkgs.devshell.mkShell {
-          packages = with pkgs; [(rust.override {extensions = ["rust-src"];}) rust-analyzer-unwrapped];
+          packages = with pkgs; [gcc (rust.override {extensions = ["rust-src" "clippy" ];}) rust-analyzer-unwrapped];
         };
       formatter = pkgs.alejandra;
     });
