@@ -1,11 +1,14 @@
 {
-  description = "Another cool rust disaster from samw.";
+  description = "A Rust EXI codec";
 
   inputs = {
     utils.url = "github:numtide/flake-utils";
     devshell.url = "github:numtide/devshell";
     naersk.url = "github:nix-community/naersk";
-    rust-overlay.url = "github:oxalica/rust-overlay";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -14,14 +17,20 @@
     utils,
     naersk,
     devshell,
-    rust-overlay,
+    fenix,
   }:
     utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
         inherit system;
-        overlays = [(import rust-overlay)];
+        overlays = [fenix.overlays.default];
       };
-      rust = pkgs.rust-bin.stable.latest.default;
+      rust = (pkgs.fenix.stable.withComponents [
+        "cargo"
+        "clippy"
+        "rust-src"
+        "rustc"
+        "rustfmt"
+      ]);
       # Override naersk to use our chosen rust version from rust-overlay
       naersk-lib = naersk.lib.${system}.override {
         cargo = rust;
@@ -39,11 +48,11 @@
       devShells.default = let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [devshell.overlays.default];
+          overlays = [fenix.overlays.default devshell.overlays.default];
         };
       in
         pkgs.devshell.mkShell {
-          packages = with pkgs; [gcc (rust.override {extensions = ["rust-src" "clippy" ];}) rust-analyzer-unwrapped];
+          packages = with pkgs; [rust rust-analyzer];
         };
       formatter = pkgs.alejandra;
     });
