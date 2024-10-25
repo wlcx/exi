@@ -34,9 +34,9 @@ enum Commands {
         in_file: Option<PathBuf>,
         /// File to output to. Defaults to stdout.
         out_file: Option<PathBuf>,
-        /// Pretty print output (indented)
+        /// Number of spaces to indent pretty output)
         #[arg(short, long)]
-        pretty: bool,
+        pretty: Option<u8>,
     },
 }
 
@@ -72,12 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input.read_to_end(&mut buf)?;
             let output: Box<dyn Write> = match out_file {
                 None => Box::new(BufWriter::new(io::stdout())),
-                Some(f) => Box::new(BufWriter::new(File::open(f)?)),
+                Some(f) => Box::new(BufWriter::new(File::create_new(f)?)),
             };
-            let mut w = if pretty {
-                quick_xml::Writer::new_with_indent(output, b' ', 4)
-            } else {
-                quick_xml::Writer::new(output)
+            let mut w = match pretty {
+                Some(n) => quick_xml::Writer::new_with_indent(output, b' ', n.into()),
+                None => quick_xml::Writer::new(output),
             };
             for ev in exi::decoder::decode(&buf)?.body.into_iter().to_quick_xml() {
                 w.write_event(ev)?;
