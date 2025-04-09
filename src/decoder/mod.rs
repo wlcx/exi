@@ -50,7 +50,7 @@ impl<T: std::fmt::Debug> PrefixTable<T> {
 
     fn add(&mut self, i: T) -> usize {
         self.0.push(i);
-        log::debug!(
+        log::trace!(
             "Added {:?} to prefix table, contents: {:?}",
             self.0[self.0.len() - 1],
             self.0
@@ -123,7 +123,7 @@ struct StringTable {
 
 impl StringTable {
     fn add_value(&mut self, qname: Qname, value: Value) {
-        log::debug!("Adding {:?} to string table", value);
+        log::trace!("Adding {:?} to string table", value);
         let s = Rc::new(value);
         self.global_values.add(s.clone());
         self.local_values
@@ -140,18 +140,18 @@ impl StringTable {
     ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> + 'b {
         move |i| {
             let to_take = ilog2_ceil(self.uris.len() + 1);
-            log::debug!(
+            log::trace!(
                 "parse_uri from uri partition len {}, using {}-bit prefix",
                 self.uris.len(),
                 to_take
             );
             let (rest, prefix) = n_bit_unsigned_int(to_take, true)(i)?;
-            log::debug!("parse_uri prefix = {}", prefix);
+            log::trace!("parse_uri prefix = {}", prefix);
             if prefix == 0 {
                 // Miss, what follows is a full uri (string, with length field n+1 where n
                 // is the length of the string)
                 let (rest2, uri) = parse_string_with_len_offset(1)(i)?;
-                log::debug!("parse uri: miss, adding {}", uri);
+                log::trace!("parse uri: miss, adding {}", uri);
                 self.uris.add(URIStringTable::with_uri(uri.clone()));
                 Ok((rest2, uri))
             } else {
@@ -162,7 +162,7 @@ impl StringTable {
                     .get((prefix - 1).try_into().unwrap())
                     .map(|u| u.uri.clone())
                     .unwrap();
-                log::debug!("parse uri: hit, got '{}'", u);
+                log::trace!("parse uri: hit, got '{}'", u);
                 Ok((rest, u))
             }
         }
@@ -192,12 +192,12 @@ impl StringTable {
                 }),
             )(i)
             {
-                log::debug!("parse localname: hit, got {}", s);
+                log::trace!("parse localname: hit, got {}", s);
                 return Ok((rest, s));
             }
             // Miss - a string with length incremented by 1
             let (rest, s) = parse_string_with_len_offset(1)(i)?;
-            log::debug!("parse localname: miss, adding {}", s);
+            log::trace!("parse localname: miss, adding {}", s);
             ln.add(s.clone());
             Ok((rest, s))
         }
@@ -392,7 +392,7 @@ impl GrammarStack {
     }
     fn push(&mut self, v: Rc<RefCell<dyn GrammaryThing>>) {
         self.0.push(v);
-        log::debug!(
+        log::trace!(
             "Pushed grammar. Stack: {}",
             self.0
                 .iter()
@@ -405,7 +405,7 @@ impl GrammarStack {
 
     fn pop(&mut self) {
         self.0.pop();
-        log::debug!(
+        log::trace!(
             "Popped grammar. Stack: {}",
             self.0
                 .iter()
@@ -432,7 +432,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
     loop {
         let (rest, event) = grammar_stack.current().borrow_mut().parse(input)?;
         input = rest;
-        log::debug!("ParseEvent: {:?}", event);
+        log::trace!("ParseEvent: {:?}", event);
         let (rest, parsed_event) =
             match event {
                 ParseEvent::SD => success(Event::StartDocument)(input)?,
@@ -447,7 +447,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                         eg.borrow_mut().reset();
                         grammar_stack.push(eg.clone());
                     } else {
-                        log::debug!("creating new global element grammar for qname {}", qname);
+                        log::trace!("creating new global element grammar for qname {}", qname);
                         let ng = Rc::new(RefCell::new(ElementGrammar::new(
                             qname.clone(),
                             state.options.clone(),
@@ -501,7 +501,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                 e => unimplemented!("Event {:?} unimplemented", e),
             };
         input = rest;
-        log::debug!("output event: {:?}", parsed_event);
+        log::debug!("Decoded event: {:?}", parsed_event);
         output.push(parsed_event);
         // TODO: bit gross?
         if output[output.len() - 1] == Event::EndDocument {

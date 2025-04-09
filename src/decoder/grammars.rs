@@ -127,7 +127,7 @@ impl GrammaryThing for DocumentGrammar {
         }
         .map_err(nom::Err::convert)?;
         if self.current_subgrammar != next {
-            log::debug!("subgrammar {:?} -> {:?}", self.current_subgrammar, next);
+            log::trace!("subgrammar {:?} -> {:?}", self.current_subgrammar, next);
             self.current_subgrammar = next;
         }
         Ok((rest, event))
@@ -146,9 +146,9 @@ impl GrammaryThing for DocumentGrammar {
     }
 
     fn pprint(&self) {
-        log::debug!("Document:\n{}", self.document.pprint());
-        log::debug!("Doc content:\n{}", self.doc_content.pprint());
-        log::debug!("Doc end:\n{}", self.doc_end.pprint());
+        log::trace!("Document:\n{}", self.document.pprint());
+        log::trace!("Doc content:\n{}", self.doc_content.pprint());
+        log::trace!("Doc end:\n{}", self.doc_end.pprint());
     }
 
     fn context_qname(&self) -> Option<&Qname> {
@@ -337,7 +337,7 @@ impl GrammaryThing for ElementGrammar {
         .map_err(nom::Err::convert)?;
         self.next_subgrammar = next;
         if Some(self.current_subgrammar) != self.next_subgrammar {
-            log::debug!(
+            log::trace!(
                 "next subgrammar {:?} -> {:?}",
                 self.current_subgrammar,
                 next
@@ -420,7 +420,7 @@ impl GrammaryThing for ElementGrammar {
     }
 
     fn pprint(&self) {
-        log::debug!("Element content:\n{}", self.element_content.pprint());
-        log::debug!("start tag content:\n{}", self.start_tag_content.pprint());
+        log::trace!("Element content:\n{}", self.element_content.pprint());
+        log::trace!("start tag content:\n{}", self.start_tag_content.pprint());
     }
 }

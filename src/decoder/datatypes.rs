@@ -265,7 +265,7 @@ pub fn parse_string_with_len_offset(
     // FIXME: restricted character sets (https://www.w3.org/TR/exi/#restrictedCharSet)
     move |i| {
         let (rem, mut len) = unsigned_int(i)?;
-        log::debug!("parse string with len {}, offset {}", len, len_offset);
+        log::trace!("parse string with len {}, offset {}", len, len_offset);
         len -= len_offset as u64;
         let (rest, codepoints) = count(
             map(
@@ -288,7 +288,7 @@ pub fn parse_string_with_len_offset(
             .into_iter()
             .filter_map(char::from_u32)
             .collect::<String>();
-        log::debug!("parse string: parsed {}", s);
+        log::trace!("parse string: parsed {}", s);
         Ok((rest, s))
     }
 }
