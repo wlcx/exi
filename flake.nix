@@ -3,8 +3,7 @@
 
   inputs = {
     utils.url = "github:numtide/flake-utils";
-    devshell.url = "github:numtide/devshell";
-    naersk.url = "github:nix-community/naersk";
+    crane.url = "github:ipetkov/crane";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -14,15 +13,18 @@
   outputs = {
     self,
     nixpkgs,
+    nixpkgs-unstable,
     utils,
-    naersk,
-    devshell,
+    crane,
     fenix,
   }:
     utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
         inherit system;
         overlays = [fenix.overlays.default];
+      };
+      pkgs-unstable = import nixpkgs-unstable {
+        inherit system;
       };
       rust = (pkgs.fenix.stable.withComponents [
         "cargo"
@@ -31,29 +33,40 @@
         "rustc"
         "rustfmt"
       ]);
-      # Override naersk to use our chosen rust version from rust-overlay
-      naersk-lib = naersk.lib.${system}.override {
-        cargo = rust;
-        rustc = rust;
+      craneLib = (crane.mkLib pkgs).overrideToolchain (_: rust);
+      src = craneLib.cleanCargoSource ./.;
+      commonArgs = {
+        inherit src;
+        strictDeps = true;
       };
-    in rec {
-      packages.default = naersk-lib.buildPackage {
-        pname = "exi";
+      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+      individualCrateArgs = commonArgs // {
+        inherit cargoArtifacts;
+        inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
+        # NB: we disable tests since we'll run them all via cargo-nextest
+        doCheck = false;
+      };
+      fileSetForCrate = crate: pkgs.lib.fileset.toSource {
         root = ./.;
+        fileset = pkgs.lib.fileset.unions [
+          ./Cargo.toml
+          ./Cargo.lock
+          ./src
+          crate
+        ];
       };
+      exicmd = craneLib.buildPackage (individualCrateArgs // {
+        pname = "exicmd";
+        cargoExtraArgs = "-p exicmd";
+        src = fileSetForCrate ./exicmd;
+      });
+    in rec {
+      packages.default = exicmd;
 
       apps.default = utils.lib.mkApp {drv = packages.default;};
 
       # Provide a dev env with rust and rust-analyzer
-      devShells.default = let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [fenix.overlays.default devshell.overlays.default];
-        };
-      in
-        pkgs.devshell.mkShell {
-          packages = with pkgs; [rust rust-analyzer];
-        };
+      devShells.default = craneLib.devShell {};
       formatter = pkgs.alejandra;
     });
 }
