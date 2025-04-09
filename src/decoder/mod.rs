@@ -14,7 +14,7 @@ use std::rc::Rc;
 use datatypes::{
     n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x, Qname, Value,
 };
-use errors::ExiError;
+use errors::{make_exierror, ExiError, ExiErrorKind};
 use grammars::{DocumentGrammar, ElementGrammar, GrammaryThing};
 use nom::branch::alt;
 use nom::combinator::{all_consuming, map, success};
@@ -373,7 +373,10 @@ fn header(i: BitInput) -> ExiResult<BitInput, Header> {
     )(i)
     .map_err(nom::Err::convert)?;
     if options_present {
-        unimplemented!();
+        return Err(nom::Err::Failure(make_exierror(
+            i,
+            ExiErrorKind::NotImplemented("Decoding EXI streams with options present".into()),
+        )));
     }
     Ok((
         rem,
@@ -498,7 +501,12 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                     }
                     (input, Event::StartElement(qname))
                 }
-                e => unimplemented!("Event {:?} unimplemented", e),
+                e => {
+                    return Err(nom::Err::Failure(make_exierror(
+                        i,
+                        ExiErrorKind::NotImplemented(format!("decode event `{:?}`", e)),
+                    )))
+                }
             };
         input = rest;
         log::debug!("Decoded event: {:?}", parsed_event);

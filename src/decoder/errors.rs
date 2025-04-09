@@ -12,6 +12,8 @@ pub(super) struct ExiError<I> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(super) enum ExiErrorKind {
+    /// Functionality not implemented (yet)
+    NotImplemented(String),
     /// Called parse on a terminated grammar
     GrammarTerminated,
     BadString,
