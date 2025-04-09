@@ -618,10 +618,18 @@ impl Display for ParseEvent {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
     use std::{fs::File, io::Read, path::PathBuf};
 
     use super::*;
     use test_log::test;
+
+    fn decode_file(name: &str) -> Result<Stream, Box<dyn std::error::Error>> {
+        let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", name].iter().collect();
+        let mut buf = Vec::new();
+        File::open(d)?.read_to_end(&mut buf)?;
+        decode(&buf)
+    }
 
     #[test]
     fn test_version() {
@@ -666,12 +674,7 @@ mod tests {
 
     #[test]
     fn helloworld() -> Result<(), Box<dyn std::error::Error>> {
-        let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", "helloworld.xml.exi"]
-            .iter()
-            .collect();
-        let mut buf = Vec::new();
-        File::open(d)?.read_to_end(&mut buf)?;
-        let s = decode(&buf)?;
+        let s = decode_file("helloworld.xml.exi")?;
         assert_eq!(
             s.body,
             vec!(
@@ -687,12 +690,7 @@ mod tests {
 
     #[test]
     fn notebook() -> Result<(), Box<dyn std::error::Error>> {
-        let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", "notebook.xml.exi"]
-            .iter()
-            .collect();
-        let mut buf = Vec::new();
-        File::open(d)?.read_to_end(&mut buf)?;
-        let s = decode(&buf)?;
+        let s = decode_file("notebook.xml.exi")?;
         assert_eq!(
             s.body,
             vec!(
@@ -733,6 +731,25 @@ mod tests {
                 Event::EndElement,
                 Event::EndDocument,
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested() -> Result<(), Box<dyn std::error::Error>> {
+        let s = decode_file("nested.xml.exi")?;
+        assert_eq!(
+            s.body,
+            vec![
+                Event::StartDocument,
+                Event::StartElement("test".into()),
+                Event::StartElement("test".into()),
+                Event::EndElement,
+                Event::StartElement("test".into()),
+                Event::EndElement,
+                Event::EndElement,
+                Event::EndDocument,
+            ],
         );
         Ok(())
     }
