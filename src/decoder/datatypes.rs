@@ -3,10 +3,8 @@ use std::{cell::RefCell, fmt::Display, hash::Hash, ops::RangeBounds, rc::Rc};
 use nom::{
     bits::complete::{bool, tag, take},
     combinator::{map, verify},
-    error::Error,
     multi::count,
     sequence::tuple,
-    Parser,
 };
 
 use crate::{
@@ -67,19 +65,18 @@ impl From<Decimal> for String {
 // https://www.w3.org/TR/exi/#encodingDecimal
 fn decimal(i: BitInput) -> ExiResult<BitInput, Decimal> {
     let (next, negative) = boolean(i)?;
-    let x = map(
+    map(
         tuple((unsigned_int, unsigned_int)),
-        |(integral, fractional)| Decimal {
+        move |(integral, fractional)| Decimal {
             negative,
             integral,
             fractional,
         },
-    )(next);
-    x
+    )(next)
 }
 
 // https://www.w3.org/TR/exi/#encodingFloat
-fn float(i: BitInput) -> ExiResult<BitInput, f64> {
+fn float(_i: BitInput) -> ExiResult<BitInput, f64> {
     unimplemented!()
 }
 
