@@ -15,7 +15,7 @@ use datatypes::{
     n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x, Qname, Value,
 };
 use errors::{make_exierror, ExiError, ExiErrorKind};
-use grammars::{DocumentGrammar, ElementGrammar, GrammaryThing};
+use grammars::{DocumentGrammar, ElementGrammar, GrammarEnum};
 use nom::branch::alt;
 use nom::combinator::{all_consuming, map, success};
 use nom::{
@@ -388,12 +388,12 @@ fn header(i: BitInput) -> ExiResult<BitInput, Header> {
 }
 
 // Newtype to make things a bit more ergonomic
-struct GrammarStack(Vec<Rc<RefCell<dyn GrammaryThing>>>);
+struct GrammarStack(Vec<Rc<RefCell<GrammarEnum>>>);
 impl GrammarStack {
     fn new() -> Self {
         Self(Vec::new())
     }
-    fn push(&mut self, v: Rc<RefCell<dyn GrammaryThing>>) {
+    fn push(&mut self, v: Rc<RefCell<GrammarEnum>>) {
         self.0.push(v);
         log::trace!(
             "Pushed grammar. Stack: {}",
@@ -403,7 +403,6 @@ impl GrammarStack {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        self.current().borrow().pprint();
     }
 
     fn pop(&mut self) {
@@ -416,10 +415,9 @@ impl GrammarStack {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        self.current().borrow().pprint();
     }
 
-    fn current(&self) -> &RefCell<dyn GrammaryThing> {
+    fn current(&self) -> &RefCell<GrammarEnum> {
         self.0.last().unwrap().deref()
     }
 }
@@ -427,13 +425,18 @@ impl GrammarStack {
 fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
     let state = Rc::new(DecoderState::new());
     let mut grammar_stack = GrammarStack::new();
-    grammar_stack.push(Rc::new(RefCell::new(DocumentGrammar::new(
-        state.options.clone(),
+    grammar_stack.push(Rc::new(RefCell::new(GrammarEnum::Document(
+        DocumentGrammar::new(state.options.clone()),
     ))));
     let mut output = Vec::new();
     let mut input = i;
     loop {
-        let (rest, event) = grammar_stack.current().borrow_mut().parse(input)?;
+        let (rest, event) = {
+            let mut g = grammar_stack.current().borrow_mut();
+            log::trace!("Current grammar: {}", g.describe());
+            g.pprint();
+            g.parse(input)?
+        };
         input = rest;
         log::trace!("ParseEvent: {:?}", event);
         let (rest, parsed_event) =
@@ -445,16 +448,18 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                     let ev = Event::StartElement(qname.clone());
                     // Add a SE ( qname ) production to the current grammar
                     grammar_stack.current().borrow_mut().specialise(&ev);
-                    let mut egs = state.element_grammars.borrow_mut();
+                    let mut egs = state.global_element_grammars.borrow_mut();
                     if let Some(eg) = egs.get(&qname) {
-                        eg.borrow_mut().reset();
-                        grammar_stack.push(eg.clone());
+                        log::trace!("Cloning existing element grammar for qname {}", qname);
+                        let mut ng = eg.borrow_mut().clone();
+                        ng.reset();
+                        grammar_stack.push(Rc::new(RefCell::new(ng)));
                     } else {
                         log::trace!("creating new global element grammar for qname {}", qname);
-                        let ng = Rc::new(RefCell::new(ElementGrammar::new(
+                        let ng = Rc::new(RefCell::new(GrammarEnum::Element(ElementGrammar::new(
                             qname.clone(),
                             state.options.clone(),
-                        )));
+                        ))));
                         egs.insert(qname, ng.clone());
                         grammar_stack.push(ng);
                     }
@@ -492,7 +497,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                     (rest, Event::Attribute { qname, value })
                 }
                 ParseEvent::SEQname(qname) => {
-                    let egs = state.element_grammars.borrow_mut();
+                    let egs = state.global_element_grammars.borrow();
                     if let Some(eg) = egs.get(&qname) {
                         eg.borrow_mut().reset();
                         grammar_stack.push(eg.clone());
@@ -557,7 +562,7 @@ pub fn decode(i: &[u8]) -> Result<Stream, Box<dyn std::error::Error>> {
 struct DecoderState {
     options: Rc<Options>,
     string_table: Rc<RefCell<StringTable>>,
-    element_grammars: RefCell<HashMap<Qname, Rc<RefCell<dyn GrammaryThing>>>>,
+    global_element_grammars: RefCell<HashMap<Qname, Rc<RefCell<GrammarEnum>>>>,
 }
 
 impl DecoderState {
@@ -565,14 +570,14 @@ impl DecoderState {
         Self {
             options: Rc::new(Options::default()),
             string_table: Rc::new(RefCell::new(StringTable::default())),
-            element_grammars: RefCell::new(HashMap::new()),
+            global_element_grammars: RefCell::new(HashMap::new()),
         }
     }
 }
 
 // Each of the possible things an event code can be mapped to. Corresponds to members of
 // the Event enum, just without associated data.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum ParseEvent {
     SD,
     ED,

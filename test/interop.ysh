@@ -3,13 +3,13 @@
 proc interop(xmldir) {
     echo "Running exificient -> exicmd interop tests"
     # exificient is really annoying and doesn't support stdin/stdout, so we use a named pipe
-    rm testpipe
+    rm -f testpipe
     mkfifo testpipe
     for f in $xmldir/**/*.xml $xmldir/*.xml {
         echo "Testing with $f"
         # encode each file with exificient and decode again with exicmd, diffing the input and
         # output. We use difft (difftastic) to do a *semantic diff*, ignoring whitespace.
-        exificient -encode -i $f -o testpipe && exicmd decode --pretty 1 testpipe | difft --exit-code $f -
+        exificient -encode -i $f -o testpipe && exicmd -vv decode  --pretty 1 testpipe | xmllint -c14n - | diff <(xmllint -c14n $f) -
     }
 }
 

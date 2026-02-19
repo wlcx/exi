@@ -3,14 +3,20 @@ use std::{fmt::Display, rc::Rc};
 use crate::util::BitInput;
 
 use super::{
-    codetree::CodeTree,
-    datatypes::Qname,
-    errors::{make_exierror, ExiErrorKind},
-    options::Options,
     Event, ExiResult, ParseEvent,
+    codetree::{CodeTree, codetree},
+    datatypes::Qname,
+    errors::{ExiErrorKind, make_exierror},
+    options::Options,
 };
 
-#[derive(Debug, Clone)]
+// TODO: rethink how all this works
+// Currently grammar productions map to an enum describing the *next* grammar to use. This
+// was easier to implement, but results in a bunch of extra code - it would be much neater
+// for each production to map to a reference to the next grammar to use (which may be
+// self-referential).
+
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct Production<T>(ParseEvent, Option<T>);
 
 impl<T> From<(ParseEvent, Option<T>)> for Production<T> {
@@ -23,7 +29,7 @@ impl<T: Display> Display for Production<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)?;
         if let Some(rhs) = &self.1 {
-            write!(f, "\t")?;
+            write!(f, "\t\t")?;
             rhs.fmt(f)?;
         }
         Ok(())
@@ -50,6 +56,64 @@ pub trait GrammaryThing {
     fn pprint(&self);
 }
 
+#[derive(Clone)]
+pub(crate) enum GrammarEnum {
+    Document(DocumentGrammar),
+    Element(ElementGrammar),
+    Fragment(FragmentGrammar),
+}
+
+impl GrammarEnum {
+    pub fn parse<'a>(&mut self, i: BitInput<'a>) -> ExiResult<BitInput<'a>, ParseEvent> {
+        match self {
+            Self::Document(d) => d.parse(i),
+            Self::Element(d) => d.parse(i),
+            Self::Fragment(d) => d.parse(i),
+        }
+    }
+
+    pub fn specialise(&mut self, ev: &Event) {
+        match self {
+            Self::Document(d) => d.specialise(ev),
+            Self::Element(d) => d.specialise(ev),
+            Self::Fragment(d) => d.specialise(ev),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            Self::Document(d) => d.reset(),
+            Self::Element(d) => d.reset(),
+            Self::Fragment(d) => d.reset(),
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Document(d) => d.describe(),
+            Self::Element(d) => d.describe(),
+            Self::Fragment(d) => d.describe(),
+        }
+    }
+
+    pub fn context_qname(&self) -> Option<&Qname> {
+        match self {
+            Self::Document(d) => d.context_qname(),
+            Self::Element(d) => d.context_qname(),
+            Self::Fragment(d) => d.context_qname(),
+        }
+    }
+
+    pub fn pprint(&self) {
+        match self {
+            Self::Document(d) => d.pprint(),
+            Self::Element(d) => d.pprint(),
+            Self::Fragment(d) => d.pprint(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct DocumentGrammar {
     document: Grammar<DocumentSubgrammar>,
     doc_content: Grammar<DocumentSubgrammar>,
@@ -74,7 +138,7 @@ impl Display for DocumentSubgrammar {
 impl DocumentGrammar {
     pub fn new(o: Rc<Options>) -> Self {
         let mut dc_v = vec![vec![
-            (ParseEvent::SE, Some(DocumentSubgrammar::DocEnd)).into()
+            (ParseEvent::SE, Some(DocumentSubgrammar::DocEnd)).into(),
         ]];
 
         let mut dcv_l2 = vec![];
@@ -156,6 +220,7 @@ impl GrammaryThing for DocumentGrammar {
     }
 }
 
+#[derive(Clone)]
 pub struct FragmentGrammar {
     fragment: Grammar<FragmentSubgrammar>,
     fragment_content: Grammar<FragmentSubgrammar>,
@@ -226,6 +291,7 @@ impl GrammaryThing for FragmentGrammar {
     }
 }
 
+#[derive(Clone)]
 pub struct ElementGrammar {
     for_qname: Qname,
     start_tag_content: Grammar<ElementSubgrammar>,
@@ -285,33 +351,20 @@ impl ElementGrammar {
             stcv.push(stc_l3)
         }
 
-        let mut ecv = vec![vec![(ParseEvent::EE, None).into()]];
-
-        let mut ec_l2 = vec![
-            (ParseEvent::SE, Some(ElementSubgrammar::ElementContent)).into(),
-            (ParseEvent::CH, Some(ElementSubgrammar::ElementContent)).into(),
-        ];
-        if o.preserve.dtd {
-            ec_l2.push((ParseEvent::ER, Some(ElementSubgrammar::ElementContent)).into())
-        }
-        ecv.push(ec_l2);
-
-        if o.preserve.comments || o.preserve.pis {
-            let mut ec_l3 = vec![];
-            if o.preserve.comments {
-                ec_l3.push((ParseEvent::CM, Some(ElementSubgrammar::ElementContent)).into());
-            }
-            if o.preserve.pis {
-                ec_l3.push((ParseEvent::PI, Some(ElementSubgrammar::ElementContent)).into());
-            }
-            ecv.push(ec_l3)
-        }
+        let mut ec = codetree!(
+            0     => (ParseEvent::EE, None);
+            0,0   => (ParseEvent::SE, Some(ElementSubgrammar::ElementContent));
+            0,0   => (ParseEvent::CH, Some(ElementSubgrammar::ElementContent));
+            0,0   => (ParseEvent::ER, Some(ElementSubgrammar::ElementContent)), o.preserve.dtd;
+            0,0,0 => (ParseEvent::CM, Some(ElementSubgrammar::ElementContent)), o.preserve.comments;
+            0,0,0 => (ParseEvent::PI, Some(ElementSubgrammar::ElementContent)), o.preserve.pis;
+        );
 
         Self {
             for_qname: qname,
             start_tag_content: CodeTree::from_vecs(stcv),
             start_tag_content_has_ch: false,
-            element_content: CodeTree::from_vecs(ecv),
+            element_content: ec,
             element_content_has_ch: false,
             current_subgrammar: ElementSubgrammar::StartTagContent,
             next_subgrammar: Some(ElementSubgrammar::StartTagContent),
@@ -349,11 +402,18 @@ impl GrammaryThing for ElementGrammar {
     fn specialise(&mut self, ev: &Event) {
         match (ev, self.current_subgrammar) {
             (Event::StartElement(qname), current) => {
-                let new = (
+                let new: Production<ElementSubgrammar> = (
                     ParseEvent::SEQname(qname.clone()),
                     Some(ElementSubgrammar::ElementContent),
                 )
                     .into();
+                // Sanity check: there shouldn't be matching SEQname in the grammar already
+                assert!(
+                    self.element_content
+                        .iter()
+                        .position(|e| *e == new)
+                        .is_none()
+                );
                 match current {
                     ElementSubgrammar::ElementContent => {
                         self.element_content = self.element_content.insert(0, new);

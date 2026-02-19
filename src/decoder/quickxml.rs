@@ -1,10 +1,16 @@
+//! Interoperability with the `quick-xml` crate.
+//!
+//! Allows for conversion from `exi` datatypes into `quick-xml` ones, to leverate its
+//! existing robust XML encoding/decoding.
 use std::collections::VecDeque;
 
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event as qEvent};
 
 use super::Event;
 
-/// Struct implementing iterative mapping from [`crate::decoder::Event`] to [`quick_xml::events::Event`].
+/// An iterator which maps from [`crate::decoder::Event`] to [`quick_xml::events::Event`].
+///
+/// Created by [`QuickXMLIterator::to_quick_xml`], see its documentation for more.
 pub struct QuickXMLEventMapper<'a, T> {
     event_iter: T,
     doc_started: bool,
@@ -103,14 +109,6 @@ impl<'a, T> QuickXMLEventMapper<'a, T> {
     }
 }
 
-pub trait QuickXMLIterator<'a, T>: Iterator<Item = T> + Sized {
-    fn to_quick_xml(self) -> QuickXMLEventMapper<'a, Self> {
-        QuickXMLEventMapper::new(self)
-    }
-}
-
-impl<'a, T, I: Iterator<Item = T>> QuickXMLIterator<'a, T> for I {}
-
 impl<'a, T> Iterator for QuickXMLEventMapper<'a, T>
 where
     T: Iterator<Item = Event>,
@@ -133,6 +131,15 @@ where
         }
     }
 }
+
+pub trait QuickXMLIterator<'a, T>: Iterator<Item = T> + Sized {
+    //! Turns an `Iterator` into one which emits QuickXML events
+    fn to_quick_xml(self) -> QuickXMLEventMapper<'a, Self> {
+        QuickXMLEventMapper::new(self)
+    }
+}
+
+impl<'a, T, I: Iterator<Item = T>> QuickXMLIterator<'a, T> for I {}
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,4 @@
-use exi::{
-    self,
-    decoder::quickxml::{self, QuickXMLIterator},
-};
+use exi::{self, decoder::quickxml::QuickXMLIterator};
 use log::{self, LevelFilter};
 use std::{
     fs::File,

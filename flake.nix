@@ -8,6 +8,10 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    w3c-testsuite = {
+      url = "github:w3c/exi-testsuite";
+      flake = false;
+    };
   };
 
   outputs = {
@@ -17,6 +21,7 @@
     utils,
     crane,
     fenix,
+    w3c-testsuite,
   }:
     utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
@@ -60,13 +65,31 @@
         cargoExtraArgs = "-p exicmd";
         src = fileSetForCrate ./exicmd;
       });
+      testData = "${w3c-testsuite}/data/interop";
     in rec {
       packages.default = exicmd;
 
       apps.default = utils.lib.mkApp {drv = packages.default;};
 
       # Provide a dev env with rust and rust-analyzer
-      devShells.default = craneLib.devShell {};
+      devShells.default = craneLib.devShell {
+        #checks = self.checks.${system};
+        packages = [ pkgs.rust-analyzer ];
+      };
       formatter = pkgs.alejandra;
+
+      checks.interop = (pkgs.runCommand "interop_tests" {
+        src = ./.;
+        nativeBuildInputs = [
+          packages.default
+          pkgs-unstable.exificient
+          pkgs.oils-for-unix
+          pkgs.difftastic
+          # For xmllint
+          pkgs.libxml2
+        ];
+      } ''
+        $src/test/interop.ysh ${testData}/builtInGrammar
+      '');
     });
 }
