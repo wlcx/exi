@@ -320,49 +320,31 @@ impl ElementGrammar {
     pub fn new(qname: Qname, o: Rc<Options>) -> Self {
         // TODO: have a means to factor out common grammar macro here (childcontentitems)
         // and attach to separate codetrees.
-        let mut stcv = vec![vec![]];
-        let mut stc_l2 = vec![
-            (ParseEvent::EE, None).into(),
-            (ParseEvent::AT, Some(ElementSubgrammar::StartTagContent)).into(),
-        ];
-        if o.preserve.prefixes {
-            stc_l2.push((ParseEvent::NS, Some(ElementSubgrammar::StartTagContent)).into());
-        }
-        if o.self_contained {
-            stc_l2.push((ParseEvent::SC, Some(ElementSubgrammar::Fragment)).into())
-        }
-        stc_l2.append(&mut vec![
-            (ParseEvent::SE, Some(ElementSubgrammar::ElementContent)).into(),
-            (ParseEvent::CH, Some(ElementSubgrammar::ElementContent)).into(),
-        ]);
-        if o.preserve.dtd {
-            stc_l2.push((ParseEvent::ER, Some(ElementSubgrammar::ElementContent)).into())
-        }
-        stcv.push(stc_l2);
+        let stc = codetree!(
+            0,0  => Production::from((ParseEvent::EE, None));
+            0,0  => (ParseEvent::AT, Some(ElementSubgrammar::StartTagContent)).into();
+            0,0  => (ParseEvent::NS, Some(ElementSubgrammar::StartTagContent)).into(), o.preserve.prefixes;
+            0,0  => (ParseEvent::SC, Some(ElementSubgrammar::Fragment)).into(), o.self_contained;
+            0,0  => (ParseEvent::SE, Some(ElementSubgrammar::ElementContent)).into();
+            0,0  => (ParseEvent::CH, Some(ElementSubgrammar::ElementContent)).into();
+            0,0  => (ParseEvent::ER, Some(ElementSubgrammar::ElementContent)).into(), o.preserve.dtd;
 
-        if o.preserve.comments || o.preserve.pis {
-            let mut stc_l3 = vec![];
-            if o.preserve.comments {
-                stc_l3.push((ParseEvent::CM, Some(ElementSubgrammar::ElementContent)).into());
-            }
-            if o.preserve.pis {
-                stc_l3.push((ParseEvent::PI, Some(ElementSubgrammar::ElementContent)).into());
-            }
-            stcv.push(stc_l3)
-        }
+            0,0,0 => (ParseEvent::CM, Some(ElementSubgrammar::ElementContent)).into(), o.preserve.comments;
+            0,0,0 => (ParseEvent::PI, Some(ElementSubgrammar::ElementContent)).into(), o.preserve.pis;
+        );
 
-        let mut ec = codetree!(
-            0     => (ParseEvent::EE, None);
-            0,0   => (ParseEvent::SE, Some(ElementSubgrammar::ElementContent));
-            0,0   => (ParseEvent::CH, Some(ElementSubgrammar::ElementContent));
-            0,0   => (ParseEvent::ER, Some(ElementSubgrammar::ElementContent)), o.preserve.dtd;
-            0,0,0 => (ParseEvent::CM, Some(ElementSubgrammar::ElementContent)), o.preserve.comments;
-            0,0,0 => (ParseEvent::PI, Some(ElementSubgrammar::ElementContent)), o.preserve.pis;
+        let ec = codetree!(
+            0     => Production::from((ParseEvent::EE, None));
+            0,0   => (ParseEvent::SE, Some(ElementSubgrammar::ElementContent)).into();
+            0,0   => (ParseEvent::CH, Some(ElementSubgrammar::ElementContent)).into();
+            0,0   => (ParseEvent::ER, Some(ElementSubgrammar::ElementContent)).into(), o.preserve.dtd;
+            0,0,0 => (ParseEvent::CM, Some(ElementSubgrammar::ElementContent)).into(), o.preserve.comments;
+            0,0,0 => (ParseEvent::PI, Some(ElementSubgrammar::ElementContent)).into(), o.preserve.pis;
         );
 
         Self {
             for_qname: qname,
-            start_tag_content: CodeTree::from_vecs(stcv),
+            start_tag_content: stc,
             start_tag_content_has_ch: false,
             element_content: ec,
             element_content_has_ch: false,
