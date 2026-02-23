@@ -131,9 +131,10 @@ impl<'a, T: Clone + 'a> CodeTree<T> {
         self.len().into_iter().map(ilog2_ceil).collect()
     }
 
-    // Insert an element at the index described by `index`. Returns a copy of codetree
-    // with the element inserted
-    pub(super) fn insert(&mut self, index: usize, v: T) -> Self {
+    // Return a copy of the codetree with element `v` inserted at `index`.
+    //
+    // N.B that this only works at the "top" level. You can't currently insert into "lower" levels.
+    pub(super) fn insert(&self, index: usize, v: T) -> Self {
         match (self, index) {
             // Turn a terminal into a node, adding to the left
             (CodeTree::Terminal(i), 0) => CodeTree::Node {
@@ -152,9 +153,10 @@ impl<'a, T: Clone + 'a> CodeTree<T> {
                 if idx > left.len() {
                     panic!("can't insert");
                 }
-                left.insert(idx, v);
+                let mut new_left = left.clone();
+                new_left.insert(idx, v);
                 CodeTree::Node {
-                    left: left.to_vec(),
+                    left: new_left,
                     right: right.clone(),
                 }
             }
