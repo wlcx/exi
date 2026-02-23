@@ -8,8 +8,8 @@ use nom::{
 };
 
 use crate::{
-    decoder::errors::{make_exierror, ExiErrorKind},
-    util::{bound_values, lower_bound, BitInput},
+    decoder::errors::{ExiErrorKind, make_exierror},
+    util::{BitInput, bound_values, lower_bound},
 };
 
 use super::{ExiResult, StringTable};
@@ -99,7 +99,7 @@ where
                 }
                 // Otherwise, if the integer's lower bound is >=0, decode as an unsigned int
                 (_, Some(lower)) if lower >= 0 => {
-                    return unsigned_int(i).map(|(i, v)| (i, v as i64))
+                    return unsigned_int(i).map(|(i, v)| (i, v as i64));
                 }
                 // In all other cases, drop through
                 _ => {}

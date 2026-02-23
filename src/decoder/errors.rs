@@ -1,6 +1,6 @@
 use nom::{
-    error::{ErrorKind, ParseError},
     ErrorConvert,
+    error::{ErrorKind, ParseError},
 };
 
 #[derive(PartialEq, Clone, Debug)]

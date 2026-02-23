@@ -1,6 +1,6 @@
 use std::ops::{Bound, RangeBounds};
 
-use nom::{bits::complete::take, IResult};
+use nom::{IResult, bits::complete::take};
 
 // Alias for convenience
 pub type BitInput<'a> = (&'a [u8], usize);

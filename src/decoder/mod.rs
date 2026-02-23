@@ -12,24 +12,24 @@ use std::ops::{Deref, Index, IndexMut};
 use std::rc::Rc;
 
 use datatypes::{
-    n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x, Qname, Value,
+    Qname, Value, n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x,
 };
-use errors::{make_exierror, ExiError, ExiErrorKind};
+use errors::{ExiError, ExiErrorKind, make_exierror};
 use grammars::{DocumentGrammar, ElementGrammar, GrammarEnum};
 use nom::branch::alt;
 use nom::combinator::{all_consuming, map, success};
 use nom::{
+    IResult,
     bits::{
         bits,
         complete::{bool, tag, take},
     },
     combinator::opt,
     sequence::{preceded, tuple},
-    IResult,
 };
 use options::Options;
 
-use crate::util::{ilog2_ceil, trailing_bits, BitInput};
+use crate::util::{BitInput, ilog2_ceil, trailing_bits};
 
 type ExiResult<I, O> = IResult<I, O, ExiError<I>>;
 
@@ -510,7 +510,7 @@ fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
                     return Err(nom::Err::Failure(make_exierror(
                         i,
                         ExiErrorKind::NotImplemented(format!("decode event `{:?}`", e)),
-                    )))
+                    )));
                 }
             };
         input = rest;
