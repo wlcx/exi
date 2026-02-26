@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, iter::once, path::Iter};
+use std::{cmp::Ordering, iter::once};
 
 use nom::IResult;
 use nom::bits::complete::take;
@@ -186,7 +186,7 @@ impl<'a, T: Clone + 'a> CodeTree<T> {
         }
     }
 
-    ///! Iterates over the elements of the codetree, top to bottom, left to right.
+    ///! Iterates over the elements of the codetree, left to right, top to bottom.
     pub(super) fn iter(&'a self) -> Box<dyn Iterator<Item = &'a T> + 'a> {
         match self {
             Self::Terminal(v) => Box::new(once(v)),
@@ -199,8 +199,8 @@ impl<T> CodeTree<T>
 where
     T: Clone + PartialEq,
 {
-    //! Finds the first instance of `needle` in the codetree, top to bottom, left to right
-    pub(super) fn find(&self, needle: &T) -> Option<Vec<usize>> {
+    //! Finds the first instance of `needle` in the codetree, left to right, top to bottom, stopping at `depth` levels
+    pub(super) fn find(&self, needle: &T, depth: usize) -> Option<Vec<usize>> {
         match self {
             // in the simple case, this codetree is a single terminal
             Self::Terminal(v) => (*v == *needle).then_some(vec![0]),
@@ -209,17 +209,23 @@ where
                 .iter()
                 // first the left
                 .position(|e| e == needle)
-                .map(|i| vec![i + 1])
+                .map(|i| vec![i])
                 // and failing that the right
                 .or_else(|| match right.as_ref() {
                     // where we have to do a slightly ugly special case - we can't just recurse on
                     // `right` because we consider a terminal as part of "this" layer of the tree,
                     // not the next...
                     Self::Terminal(v) => (*v == *needle).then_some(vec![left.len()]),
-                    Self::Node { .. } => right.find(needle).map(|mut next| {
-                        next.insert(0, left.len());
-                        next
-                    }),
+                    Self::Node { .. } => {
+                        if depth > 0 {
+                            right.find(needle, depth - 1).map(|mut next| {
+                                next.insert(0, left.len());
+                                next
+                            })
+                        } else {
+                            None
+                        }
+                    }
                 }),
         }
     }
@@ -507,14 +513,22 @@ mod tests {
 
     #[test]
     fn codetree_find() {
-        assert!(CodeTree::Terminal(1).find(&2).is_none());
-        assert_eq!(CodeTree::Terminal(1).find(&1), Some(vec![0]));
+        assert!(CodeTree::Terminal(1).find(&2, 1).is_none());
+        assert_eq!(CodeTree::Terminal(1).find(&1, 1), Some(vec![0]));
         assert_eq!(
             CodeTree::Node {
                 left: vec![0, 1],
                 right: CodeTree::Terminal(3).into()
             }
-            .find(&3),
+            .find(&1, 1),
+            Some(vec![1])
+        );
+        assert_eq!(
+            CodeTree::Node {
+                left: vec![0, 1],
+                right: CodeTree::Terminal(3).into()
+            }
+            .find(&3, 1),
             Some(vec![2])
         );
         assert_eq!(
@@ -526,8 +540,22 @@ mod tests {
                 }
                 .into()
             }
-            .find(&1),
+            .find(&1, 1),
             Some(vec![0, 0])
         );
+
+        // Depth limited
+        let c = codetree!(
+            0 => 0;
+            1 => 1;
+            2,0 => 2;
+            2,1 => 3;
+            2,2,0 => 4;
+        );
+        assert_eq!(c.find(&1, 0), Some(vec![1]));
+        assert_eq!(c.find(&2, 0), None);
+        assert_eq!(c.find(&2, 1), Some(vec![2, 0]));
+        assert_eq!(c.find(&4, 1), None);
+        assert_eq!(c.find(&4, 2), Some(vec![2, 2, 0]));
     }
 }

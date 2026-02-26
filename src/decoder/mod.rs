@@ -8,14 +8,13 @@ pub mod quickxml;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::ops::{Deref, Index, IndexMut};
+use std::ops::{Index, IndexMut};
 use std::rc::Rc;
 
 use datatypes::{
     Qname, Value, n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x,
 };
 use errors::{ExiError, ExiErrorKind, make_exierror};
-use grammars::{DocumentGrammar, ElementGrammar, GrammarEnum};
 use nom::branch::alt;
 use nom::combinator::{all_consuming, map, success};
 use nom::{
@@ -29,6 +28,7 @@ use nom::{
 };
 use options::Options;
 
+use crate::decoder::grammars::{Grammar, GrammarInstance, GrammarType};
 use crate::util::{BitInput, ilog2_ceil, trailing_bits};
 
 type ExiResult<I, O> = IResult<I, O, ExiError<I>>;
@@ -388,18 +388,18 @@ fn header(i: BitInput) -> ExiResult<BitInput, Header> {
 }
 
 // Newtype to make things a bit more ergonomic
-struct GrammarStack(Vec<Rc<RefCell<GrammarEnum>>>);
+struct GrammarStack(Vec<GrammarInstance>);
 impl GrammarStack {
     fn new() -> Self {
         Self(Vec::new())
     }
-    fn push(&mut self, v: Rc<RefCell<GrammarEnum>>) {
+    fn push(&mut self, v: GrammarInstance) {
         self.0.push(v);
         log::trace!(
             "Pushed grammar. Stack: {}",
             self.0
                 .iter()
-                .map(|g| g.deref().borrow().describe())
+                .map(|g| g.describe())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -411,108 +411,110 @@ impl GrammarStack {
             "Popped grammar. Stack: {}",
             self.0
                 .iter()
-                .map(|g| g.deref().borrow().describe())
+                .map(|g| g.describe())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
     }
 
-    fn current(&self) -> &RefCell<GrammarEnum> {
-        self.0.last().unwrap().deref()
+    fn current(&self) -> &GrammarInstance {
+        self.0.last().unwrap()
+    }
+
+    fn current_mut(&mut self) -> &mut GrammarInstance {
+        self.0.last_mut().unwrap()
     }
 }
 
 fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
     let state = Rc::new(DecoderState::new());
     let mut grammar_stack = GrammarStack::new();
-    grammar_stack.push(Rc::new(RefCell::new(GrammarEnum::Document(
-        DocumentGrammar::new(state.options.clone()),
+    grammar_stack.push(GrammarInstance::instantiate(Rc::new(RefCell::new(
+        Grammar::builtin_document_grammar(state.options.clone()),
     ))));
     let mut output = Vec::new();
     let mut input = i;
     loop {
-        let (rest, event) = {
-            let mut g = grammar_stack.current().borrow_mut();
+        let (rest, (event, statehandle)) = {
+            let g = grammar_stack.current_mut();
             log::trace!("Current grammar: {}", g.describe());
             g.pprint();
             g.parse(input)?
         };
         input = rest;
         log::trace!("ParseEvent: {:?}", event);
-        let (rest, parsed_event) =
-            match event {
-                ParseEvent::SD => success(Event::StartDocument)(input)?,
-                ParseEvent::SE => {
-                    let (r1, qname) =
-                        qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
-                    let ev = Event::StartElement(qname.clone());
-                    // Add a SE ( qname ) production to the current grammar
-                    grammar_stack.current().borrow_mut().specialise(&ev);
-                    let mut egs = state.global_element_grammars.borrow_mut();
-                    if let Some(eg) = egs.get(&qname) {
-                        log::trace!("Cloning existing element grammar for qname {}", qname);
-                        let mut ng = eg.borrow_mut().clone();
-                        ng.reset();
-                        grammar_stack.push(Rc::new(RefCell::new(ng)));
-                    } else {
-                        log::trace!("creating new global element grammar for qname {}", qname);
-                        let ng = Rc::new(RefCell::new(GrammarEnum::Element(ElementGrammar::new(
-                            qname.clone(),
-                            state.options.clone(),
-                        ))));
-                        egs.insert(qname, ng.clone());
-                        grammar_stack.push(ng);
-                    }
-                    (r1, ev)
-                }
-                ParseEvent::CH => {
-                    let (r, value) =
-                        state.string_table.clone().borrow_mut().parse_value(
-                            grammar_stack.current().borrow().context_qname().unwrap(),
-                        )(input)?;
-                    let ev = Event::Characters(value);
-                    grammar_stack.current().borrow_mut().specialise(&ev);
-                    (r, ev)
-                }
-                ParseEvent::EE => {
-                    grammar_stack.pop();
-                    success(Event::EndElement)(input)?
-                }
-                ParseEvent::ED => success(Event::EndDocument)(input)?,
-                ParseEvent::AT => {
-                    // Parse the qname
-                    let (r1, qname) =
-                        qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
-                    // Parse the value
-                    let (rest, value) =
-                        state.string_table.clone().borrow_mut().parse_value(&qname)(r1)?;
-                    let ev = Event::Attribute { qname, value };
-                    // Add to this element's grammar
-                    grammar_stack.current().borrow_mut().specialise(&ev);
-                    (rest, ev)
-                }
-                ParseEvent::ATQname(qname) => {
-                    let (rest, value) =
-                        state.string_table.clone().borrow_mut().parse_value(&qname)(input)?;
-                    (rest, Event::Attribute { qname, value })
-                }
-                ParseEvent::SEQname(qname) => {
-                    let egs = state.global_element_grammars.borrow();
-                    if let Some(eg) = egs.get(&qname) {
-                        eg.borrow_mut().reset();
-                        grammar_stack.push(eg.clone());
-                    } else {
-                        panic!("SEQname can't exist without a global element grammar for it");
-                    }
-                    (input, Event::StartElement(qname))
-                }
-                e => {
-                    return Err(nom::Err::Failure(make_exierror(
-                        i,
-                        ExiErrorKind::NotImplemented(format!("decode event `{:?}`", e)),
-                    )));
-                }
-            };
+        let (rest, parsed_event) = match event {
+            ParseEvent::SD => success(Event::StartDocument)(input)?,
+            ParseEvent::SE => {
+                let (r1, qname) =
+                    qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                let ev = Event::StartElement(qname.clone());
+                // Add a SE ( qname ) production to the current grammar
+                grammar_stack.current_mut().specialise(statehandle, &ev);
+                let mut egs = state.global_element_grammars.borrow_mut();
+                let g = egs.entry(qname.clone()).or_insert_with(|| {
+                    log::trace!("creating new global element grammar for qname {}", qname);
+                    Rc::new(RefCell::new(Grammar::builtin_element_grammar(
+                        state.options.clone(),
+                        qname,
+                    )))
+                });
+                grammar_stack.push(GrammarInstance::instantiate(g.clone()));
+                (r1, ev)
+            }
+            ParseEvent::CH => {
+                let GrammarType::Element(qname) = grammar_stack.current().grammar_type() else {
+                    // Shouldn't have any other grammar type if we've just parsed a CH
+                    todo!("Throw a proper error");
+                };
+                let (r, value) =
+                    state.string_table.clone().borrow_mut().parse_value(&qname)(input)?;
+                let ev = Event::Characters(value);
+                grammar_stack.current_mut().specialise(statehandle, &ev);
+                (r, ev)
+            }
+            ParseEvent::EE => {
+                // Add a EE to the current grammar
+                let ev = Event::EndElement;
+                grammar_stack.current_mut().specialise(statehandle, &ev);
+                grammar_stack.pop();
+                success(ev)(input)?
+            }
+            ParseEvent::ED => success(Event::EndDocument)(input)?,
+            ParseEvent::AT => {
+                // Parse the qname
+                let (r1, qname) =
+                    qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                // Parse the value
+                let (rest, value) =
+                    state.string_table.clone().borrow_mut().parse_value(&qname)(r1)?;
+                let ev = Event::Attribute { qname, value };
+                // Add to this element's grammar
+                grammar_stack.current_mut().specialise(statehandle, &ev);
+                (rest, ev)
+            }
+            ParseEvent::ATQname(qname) => {
+                let (rest, value) =
+                    state.string_table.clone().borrow_mut().parse_value(&qname)(input)?;
+                (rest, Event::Attribute { qname, value })
+            }
+            ParseEvent::SEQname(qname) => {
+                let egs = state.global_element_grammars.borrow();
+                let Some(eg) = egs.get(&qname) else {
+                    todo!(
+                        "SEQname can't exist without a global element grammar for it, thow a proper error"
+                    );
+                };
+                grammar_stack.push(GrammarInstance::instantiate(eg.clone()));
+                (input, Event::StartElement(qname))
+            }
+            e => {
+                return Err(nom::Err::Failure(make_exierror(
+                    i,
+                    ExiErrorKind::NotImplemented(format!("decode event `{:?}`", e)),
+                )));
+            }
+        };
         input = rest;
         log::debug!("Decoded event: {:?}", parsed_event);
         output.push(parsed_event);
@@ -562,7 +564,7 @@ pub fn decode(i: &[u8]) -> Result<Stream, Box<dyn std::error::Error>> {
 struct DecoderState {
     options: Rc<Options>,
     string_table: Rc<RefCell<StringTable>>,
-    global_element_grammars: RefCell<HashMap<Qname, Rc<RefCell<GrammarEnum>>>>,
+    global_element_grammars: RefCell<HashMap<Qname, Rc<RefCell<Grammar>>>>,
 }
 
 impl DecoderState {
