@@ -24,6 +24,8 @@ pub(super) enum ExiErrorKind {
     GrammarTerminated,
     BadString,
     NomError(ErrorKind),
+    /// External options were provided when the decoded EXI contained options
+    ExternalOptionsClash,
 }
 
 pub(super) fn make_exierror<I>(input: I, kind: ExiErrorKind) -> ExiError<I> {

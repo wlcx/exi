@@ -149,7 +149,7 @@ impl Grammar {
     // Constractors for built-in grammars
 
     // https://www.w3.org/TR/exi/#builtinElemGrammars
-    pub(super) fn builtin_element_grammar(o: Rc<Options>, qname: Qname) -> Self {
+    pub(super) fn builtin_element_grammar(o: &Options, qname: Qname) -> Self {
         Self {
             r#type: GrammarType::Element(qname),
             states: vec![
@@ -185,7 +185,7 @@ impl Grammar {
     }
 
     // https://www.w3.org/TR/exi/#builtinDocGrammars
-    pub(super) fn builtin_document_grammar(o: Rc<Options>) -> Self {
+    pub(super) fn builtin_document_grammar(o: &Options) -> Self {
         Self {
             r#type: GrammarType::Document,
             states: vec![

@@ -1,4 +1,7 @@
-use exi::{self, decoder::quickxml::QuickXMLIterator};
+use exi::{
+    self,
+    decoder::{options::Options, quickxml::QuickXMLIterator},
+};
 use log::{self, LevelFilter};
 use std::{
     fs::File,
@@ -33,7 +36,10 @@ enum Commands {
         out_file: Option<PathBuf>,
         /// Number of spaces to indent pretty output)
         #[arg(short, long)]
-        pretty: Option<u8>,
+        indent: Option<u8>,
+        /// Preserve prefixes
+        #[arg(short, long)]
+        preserve_prefixes: bool,
     },
 }
 
@@ -59,7 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Decode {
             in_file,
             out_file,
-            pretty,
+            indent,
+            preserve_prefixes,
         } => {
             let mut buf = Vec::new();
             let mut input: Box<dyn BufRead> = match in_file {
@@ -71,11 +78,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => Box::new(BufWriter::new(io::stdout())),
                 Some(f) => Box::new(BufWriter::new(File::create_new(f)?)),
             };
-            let mut w = match pretty {
+            let mut w = match indent {
                 Some(n) => quick_xml::Writer::new_with_indent(output, b' ', n.into()),
                 None => quick_xml::Writer::new(output),
             };
-            for ev in exi::decoder::decode(&buf)?.body.into_iter().to_quick_xml() {
+            let opts = if preserve_prefixes {
+                let mut o = Options::default();
+                o.preserve.prefixes = true;
+                Some(o)
+            } else {
+                None
+            };
+            for ev in exi::decoder::decode(&buf, opts)?
+                .body
+                .into_iter()
+                .to_quick_xml()
+            {
                 w.write_event(ev)?;
             }
         }

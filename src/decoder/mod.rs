@@ -2,7 +2,7 @@ mod codetree;
 mod datatypes;
 mod errors;
 mod grammars;
-mod options;
+pub mod options;
 pub mod quickxml;
 
 use std::cell::RefCell;
@@ -425,11 +425,11 @@ impl GrammarStack {
     }
 }
 
-fn body(i: BitInput) -> ExiResult<Vec<Event>> {
-    let state = Rc::new(DecoderState::new());
+fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
+    let state = Rc::new(DecoderState::init(opts));
     let mut grammar_stack = GrammarStack::new();
     grammar_stack.push(GrammarInstance::instantiate(Rc::new(RefCell::new(
-        Grammar::builtin_document_grammar(state.options.clone()),
+        Grammar::builtin_document_grammar(state.options),
     ))));
     let mut output = Vec::new();
     let mut input = i;
@@ -454,7 +454,7 @@ fn body(i: BitInput) -> ExiResult<Vec<Event>> {
                 let g = egs.entry(qname.clone()).or_insert_with(|| {
                     log::trace!("creating new global element grammar for qname {}", qname);
                     Rc::new(RefCell::new(Grammar::builtin_element_grammar(
-                        state.options.clone(),
+                        state.options,
                         qname,
                     )))
                 });
@@ -533,44 +533,58 @@ pub struct Stream {
     pub body: Vec<Event>,
 }
 
-fn stream(i: BitInput) -> ExiResult<Stream> {
-    let (rest, header) = header(i)?;
-    log::info!(
-        "Read EXI header, version {:?}, options: {:?}",
-        header.version,
-        header.options
-    );
-    let (rest2, body) = body(rest)?;
-    // Clean up any trailing bits
-    let (rest3, trailing) = trailing_bits(rest2).map_err(nom::Err::convert)?;
-    if trailing != 0 {
-        log::warn!("input had non-zero trailing bits!");
+fn stream(external_options: Option<Options>) -> impl Fn(BitInput) -> ExiResult<Stream> {
+    move |i| {
+        let (rest, header) = header(i)?;
+        log::info!(
+            "Read EXI header, version {:?}, options: {:?}",
+            header.version,
+            header.options
+        );
+        let opts = match (&header.options, &external_options) {
+            (Some(h), None) => h,
+            (None, Some(e)) => e,
+            (Some(_), Some(_)) => {
+                return make_exierror(rest, ExiErrorKind::ExternalOptionsClash).into();
+            }
+            (None, None) => &Options::default(),
+        };
+        let (rest2, body) = body(rest, opts)?;
+        // Clean up any trailing bits
+        let (rest3, trailing) = trailing_bits(rest2).map_err(nom::Err::convert)?;
+        if trailing != 0 {
+            log::warn!("input had non-zero trailing bits!");
+        }
+        Ok((rest3, Stream { header, body }))
     }
-    Ok((rest3, Stream { header, body }))
 }
 
 /// Decode an EXI stream from input `i`.
-pub fn decode(i: &[u8]) -> Result<Stream, Box<dyn std::error::Error>> {
+pub fn decode(
+    i: &[u8],
+    external_options: Option<Options>,
+) -> Result<Stream, Box<dyn std::error::Error>> {
     // "Lovely" little nested map to allow us to return unused input with a different
     // lifetime to `i``
-    let (_, s) =
-        bits::<_, _, ExiError<(&[u8], usize)>, ExiError<&[u8]>, _>(all_consuming(stream))(i)
-            .map_err(|e| e.map(|e2| e2.map_input(|i| i.to_owned())))?;
+    let (_, s) = bits::<_, _, ExiError<(&[u8], usize)>, ExiError<&[u8]>, _>(all_consuming(stream(
+        external_options,
+    )))(i)
+    .map_err(|e| e.map(|e2| e2.map_input(|i| i.to_owned())))?;
     Ok(s)
 }
 
 // The state of the decoder. Includes the EXI header options (immutable) and string table
 // (mutable - added to as the decoder progresses)
-struct DecoderState {
-    options: Rc<Options>,
+struct DecoderState<'a> {
+    options: &'a Options,
     string_table: Rc<RefCell<StringTable>>,
     global_element_grammars: RefCell<HashMap<Qname, Rc<RefCell<Grammar>>>>,
 }
 
-impl DecoderState {
-    fn new() -> Self {
+impl<'a> DecoderState<'a> {
+    fn init(opts: &'a Options) -> Self {
         Self {
-            options: Rc::new(Options::default()),
+            options: opts,
             string_table: Rc::new(RefCell::new(StringTable::default())),
             global_element_grammars: RefCell::new(HashMap::new()),
         }
@@ -637,7 +651,7 @@ mod tests {
         let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", name].iter().collect();
         let mut buf = Vec::new();
         File::open(d)?.read_to_end(&mut buf)?;
-        decode(&buf)
+        decode(&buf, None)
     }
 
     #[test]
