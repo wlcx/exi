@@ -77,10 +77,7 @@ fn decimal(i: BitInput) -> ExiResult<Decimal> {
 
 // https://www.w3.org/TR/exi/#encodingFloat
 fn float(i: BitInput) -> ExiResult<f64> {
-    Err(nom::Err::Failure(make_exierror(
-        i,
-        ExiErrorKind::NotImplemented("decode float".into()),
-    )))
+    make_exierror(i, ExiErrorKind::NotImplemented("decode float".into())).into()
 }
 
 // https://www.w3.org/TR/exi/#encodingInteger
@@ -238,10 +235,7 @@ pub struct DateTime {}
 
 // https://www.w3.org/TR/exi/#encodingDateTime
 pub fn datetime(i: BitInput) -> ExiResult<DateTime> {
-    Err(nom::Err::Failure(make_exierror(
-        i,
-        ExiErrorKind::NotImplemented("decode datetime".into()),
-    )))
+    make_exierror(i, ExiErrorKind::NotImplemented("decode datetime".into())).into()
 }
 
 // https://www.w3.org/TR/exi/#encodingBoundedUnsigned

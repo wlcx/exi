@@ -71,6 +71,12 @@ impl<I> From<nom::error::Error<I>> for ExiError<I> {
     }
 }
 
+impl<I, O> Into<IResult<I, O, ExiError<I>>> for ExiError<I> {
+    fn into(self) -> IResult<I, O, ExiError<I>> {
+        Err(nom::Err::Failure(self))
+    }
+}
+
 // We need to implement this so that we can convert back to "byte-level" errors at the top
 // of our parse tree (where the nom::bits conversion happens)
 impl<I> ErrorConvert<ExiError<I>> for ExiError<(I, usize)> {

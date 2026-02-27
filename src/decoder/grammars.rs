@@ -266,10 +266,7 @@ impl GrammarInstance {
         i: BitInput<'a>,
     ) -> ExiResult<'a, (ParseEvent, GrammarInstanceState)> {
         let GrammarInstanceState::Live(state_handle) = self.state else {
-            return Err(nom::Err::Failure(make_exierror(
-                i,
-                ExiErrorKind::GrammarTerminated,
-            )));
+            return make_exierror(i, ExiErrorKind::GrammarTerminated).into();
         };
         let mut g = self.grammar.borrow_mut();
         let (rest, Prod(ev, next_state)) = g.parse(state_handle, i)?;

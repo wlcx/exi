@@ -371,10 +371,11 @@ fn header(i: BitInput) -> ExiResult<Header> {
     )(i)
     .map_err(nom::Err::convert)?;
     if options_present {
-        return Err(nom::Err::Failure(make_exierror(
+        return make_exierror(
             i,
             ExiErrorKind::NotImplemented("Decoding EXI streams with options present".into()),
-        )));
+        )
+        .into();
     }
     Ok((
         rem,
@@ -507,10 +508,11 @@ fn body(i: BitInput) -> ExiResult<Vec<Event>> {
                 (input, Event::StartElement(qname))
             }
             e => {
-                return Err(nom::Err::Failure(make_exierror(
+                return make_exierror(
                     i,
                     ExiErrorKind::NotImplemented(format!("decode event `{:?}`", e)),
-                )));
+                )
+                .into();
             }
         };
         input = rest;
