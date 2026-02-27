@@ -1,13 +1,19 @@
 use nom::{
-    ErrorConvert,
+    ErrorConvert, IResult,
     error::{ErrorKind, ParseError},
 };
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone)]
 
 pub(super) struct ExiError<I> {
     pub(super) kind: ExiErrorKind,
     pub(super) input: I,
+}
+
+impl<I> core::fmt::Debug for ExiError<I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.kind)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
