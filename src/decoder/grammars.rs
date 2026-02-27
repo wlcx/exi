@@ -62,7 +62,7 @@ impl Display for Prod {
 
 impl Grammar {
     // Parse some bits from `i`, using state index `state` and evaluate the matching production in the grammar
-    fn parse<'a>(&mut self, state: StateHandle, i: BitInput<'a>) -> ExiResult<BitInput<'a>, Prod> {
+    fn parse<'a>(&mut self, state: StateHandle, i: BitInput<'a>) -> ExiResult<'a, Prod> {
         // TODO: probably some error handling around invalid array indices...
         self.states[state].1.parse(i).map_err(nom::Err::convert)
     }
@@ -264,7 +264,7 @@ impl GrammarInstance {
     pub(super) fn parse<'a>(
         &mut self,
         i: BitInput<'a>,
-    ) -> ExiResult<BitInput<'a>, (ParseEvent, GrammarInstanceState)> {
+    ) -> ExiResult<'a, (ParseEvent, GrammarInstanceState)> {
         let GrammarInstanceState::Live(state_handle) = self.state else {
             return Err(nom::Err::Failure(make_exierror(
                 i,

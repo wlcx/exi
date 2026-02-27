@@ -31,7 +31,7 @@ use options::Options;
 use crate::decoder::grammars::{Grammar, GrammarInstance, GrammarType};
 use crate::util::{BitInput, ilog2_ceil, trailing_bits};
 
-type ExiResult<I, O> = IResult<I, O, ExiError<I>>;
+type ExiResult<'a, O> = IResult<BitInput<'a>, O, ExiError<BitInput<'a>>>;
 
 /// The EXI stream header. Contains the format `version` and any `options`.
 #[derive(Debug, PartialEq)]
@@ -135,9 +135,7 @@ impl StringTable {
     // Using the string table, parse a URI from the bitstream
     // URI partitions are "Optimized for Frequent use of Compact Identifiers" - the
     // compact identifiers are n bit integers where n = ceil(log2(number_of_entries + 1))
-    fn parse_uri<'a, 'b>(
-        &'b mut self,
-    ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> + 'b {
+    fn parse_uri<'a, 'b>(&'b mut self) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, String> + 'b {
         move |i| {
             let to_take = ilog2_ceil(self.uris.len() + 1);
             log::trace!(
@@ -168,7 +166,7 @@ impl StringTable {
         }
     }
 
-    fn parse_prefix<'a>(&mut self) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> {
+    fn parse_prefix<'a>(&mut self) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, String> {
         move |i| Ok((i, "fakeprefix".into()))
     }
 
@@ -181,7 +179,7 @@ impl StringTable {
     fn parse_localname<'a, 'b>(
         &'b mut self,
         uri: &'b str,
-    ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, String> + 'b {
+    ) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, String> + 'b {
         move |i| {
             let ln = &mut self.uris.find(uri).unwrap().local_name;
             // Hit - a uint 0 followed by the compact identifier
@@ -214,7 +212,7 @@ impl StringTable {
     fn parse_value<'a, 'b>(
         &'b mut self,
         qname: &'b Qname,
-    ) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Value> + 'b {
+    ) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, Value> + 'b {
         move |i| {
             if let Ok((rest1, local_or_global)) = alt((unsigned_int_x(0), unsigned_int_x(1)))(i) {
                 match local_or_global {
@@ -366,7 +364,7 @@ impl Version {
     }
 }
 
-fn header(i: BitInput) -> ExiResult<BitInput, Header> {
+fn header(i: BitInput) -> ExiResult<Header> {
     let (rem, (options_present, ver)) = preceded(
         opt(tag(0x24455849, 32usize)),
         preceded(tag(0b10, 2usize), tuple((bool, Version::parse))),
@@ -426,7 +424,7 @@ impl GrammarStack {
     }
 }
 
-fn body(i: BitInput) -> ExiResult<BitInput, Vec<Event>> {
+fn body(i: BitInput) -> ExiResult<Vec<Event>> {
     let state = Rc::new(DecoderState::new());
     let mut grammar_stack = GrammarStack::new();
     grammar_stack.push(GrammarInstance::instantiate(Rc::new(RefCell::new(
@@ -533,7 +531,7 @@ pub struct Stream {
     pub body: Vec<Event>,
 }
 
-fn stream(i: BitInput) -> ExiResult<BitInput, Stream> {
+fn stream(i: BitInput) -> ExiResult<Stream> {
     let (rest, header) = header(i)?;
     log::info!(
         "Read EXI header, version {:?}, options: {:?}",
@@ -631,7 +629,9 @@ mod tests {
     use super::*;
     use test_log::test;
 
-    fn decode_file(name: &str) -> Result<Stream, Box<dyn std::error::Error>> {
+    type TE<T> = Result<T, Box<dyn std::error::Error>>;
+
+    fn decode_file(name: &str) -> TE<Stream> {
         let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", name].iter().collect();
         let mut buf = Vec::new();
         File::open(d)?.read_to_end(&mut buf)?;
@@ -680,7 +680,7 @@ mod tests {
     //
 
     #[test]
-    fn helloworld() -> Result<(), Box<dyn std::error::Error>> {
+    fn helloworld() -> TE<()> {
         let s = decode_file("helloworld.xml.exi")?;
         assert_eq!(
             s.body,
@@ -696,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn notebook() -> Result<(), Box<dyn std::error::Error>> {
+    fn notebook() -> TE<()> {
         let s = decode_file("notebook.xml.exi")?;
         assert_eq!(
             s.body,
@@ -743,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nested() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_nested() -> TE<()> {
         let s = decode_file("nested.xml.exi")?;
         assert_eq!(
             s.body,

@@ -15,7 +15,7 @@ use crate::{
 use super::{ExiResult, StringTable};
 
 // https://www.w3.org/TR/exi/#encodingBinary
-fn binary(i: BitInput) -> ExiResult<BitInput, Vec<u8>> {
+fn binary(i: BitInput) -> ExiResult<Vec<u8>> {
     let (rest, len) = unsigned_int(i)?;
     count(take(8usize), usize::try_from(len).unwrap())(rest)
 }
@@ -28,7 +28,7 @@ enum XsdBool {
 }
 
 // https://www.w3.org/TR/exi/#encodingBoolean
-fn xsd_boolean(i: BitInput) -> ExiResult<BitInput, XsdBool> {
+fn xsd_boolean(i: BitInput) -> ExiResult<XsdBool> {
     map(n_bit_unsigned_int(2, true), |b: u64| match b {
         0 => XsdBool::False,
         1 => XsdBool::Zero,
@@ -39,7 +39,7 @@ fn xsd_boolean(i: BitInput) -> ExiResult<BitInput, XsdBool> {
 }
 
 // https://www.w3.org/TR/exi/#encodingBoolean
-fn boolean(i: BitInput) -> ExiResult<BitInput, bool> {
+fn boolean(i: BitInput) -> ExiResult<bool> {
     bool(i)
 }
 
@@ -63,7 +63,7 @@ impl From<Decimal> for String {
 }
 
 // https://www.w3.org/TR/exi/#encodingDecimal
-fn decimal(i: BitInput) -> ExiResult<BitInput, Decimal> {
+fn decimal(i: BitInput) -> ExiResult<Decimal> {
     let (next, negative) = boolean(i)?;
     map(
         tuple((unsigned_int, unsigned_int)),
@@ -76,7 +76,7 @@ fn decimal(i: BitInput) -> ExiResult<BitInput, Decimal> {
 }
 
 // https://www.w3.org/TR/exi/#encodingFloat
-fn float(i: BitInput) -> ExiResult<BitInput, f64> {
+fn float(i: BitInput) -> ExiResult<f64> {
     Err(nom::Err::Failure(make_exierror(
         i,
         ExiErrorKind::NotImplemented("decode float".into()),
@@ -84,7 +84,7 @@ fn float(i: BitInput) -> ExiResult<BitInput, f64> {
 }
 
 // https://www.w3.org/TR/exi/#encodingInteger
-fn integer<B>(bound: Option<B>) -> impl FnMut(BitInput) -> ExiResult<BitInput, i64>
+fn integer<B>(bound: Option<B>) -> impl FnMut(BitInput) -> ExiResult<i64>
 where
     B: RangeBounds<i64>,
 {
@@ -118,7 +118,7 @@ where
 }
 
 // Parse an exact unsigned int
-pub fn unsigned_int_x(x: usize) -> impl FnMut(BitInput) -> ExiResult<BitInput, usize> {
+pub fn unsigned_int_x(x: usize) -> impl FnMut(BitInput) -> ExiResult<usize> {
     if x > 128 {
         unimplemented!("Can only do single-byte matches currently.")
     }
@@ -126,7 +126,7 @@ pub fn unsigned_int_x(x: usize) -> impl FnMut(BitInput) -> ExiResult<BitInput, u
 }
 
 // https://www.w3.org/TR/exi/#encodingUnsignedInteger
-pub fn unsigned_int(i: BitInput) -> ExiResult<BitInput, u64> {
+pub fn unsigned_int(i: BitInput) -> ExiResult<u64> {
     let mut value = 0u64;
     let mut multiplier = 1u64;
     let mut rem = i;
@@ -206,7 +206,7 @@ impl Hash for Qname {
 pub fn qname<'a>(
     st: Rc<RefCell<StringTable>>,
     preserve_prefix: bool,
-) -> impl Fn(BitInput<'a>) -> ExiResult<BitInput<'a>, Qname> {
+) -> impl Fn(BitInput<'a>) -> ExiResult<'a, Qname> {
     move |i| {
         // FIXME: can these borrow_muts be tidied up?
         let (r, uri) = st.borrow_mut().parse_uri()(i)?;
@@ -237,7 +237,7 @@ pub fn qname<'a>(
 pub struct DateTime {}
 
 // https://www.w3.org/TR/exi/#encodingDateTime
-pub fn datetime(i: BitInput) -> ExiResult<BitInput, DateTime> {
+pub fn datetime(i: BitInput) -> ExiResult<DateTime> {
     Err(nom::Err::Failure(make_exierror(
         i,
         ExiErrorKind::NotImplemented("decode datetime".into()),
@@ -245,10 +245,7 @@ pub fn datetime(i: BitInput) -> ExiResult<BitInput, DateTime> {
 }
 
 // https://www.w3.org/TR/exi/#encodingBoundedUnsigned
-pub fn n_bit_unsigned_int(
-    n: u32,
-    bitpacked: bool,
-) -> impl FnMut(BitInput) -> ExiResult<BitInput, u64> {
+pub fn n_bit_unsigned_int(n: u32, bitpacked: bool) -> impl FnMut(BitInput) -> ExiResult<u64> {
     move |i| {
         if !bitpacked {
             return unsigned_int(i);
@@ -258,13 +255,11 @@ pub fn n_bit_unsigned_int(
 }
 
 // https://www.w3.org/TR/exi/#encodingString
-pub fn string(i: BitInput) -> ExiResult<BitInput, String> {
+pub fn string(i: BitInput) -> ExiResult<String> {
     parse_string_with_len_offset(0)(i)
 }
 
-pub fn parse_string_with_len_offset(
-    len_offset: u8,
-) -> impl FnMut(BitInput) -> ExiResult<BitInput, String> {
+pub fn parse_string_with_len_offset(len_offset: u8) -> impl FnMut(BitInput) -> ExiResult<String> {
     // FIXME: restricted character sets (https://www.w3.org/TR/exi/#restrictedCharSet)
     move |i| {
         let (rem, mut len) = unsigned_int(i)?;
@@ -297,13 +292,11 @@ pub fn parse_string_with_len_offset(
 }
 
 // A function which parses an EXI datatype
-type TypeParser<'a, O> = fn(BitInput<'a>) -> ExiResult<BitInput<'a>, O>;
+type TypeParser<'a, O> = fn(BitInput<'a>) -> ExiResult<'a, O>;
 
 // https://www.w3.org/TR/exi/#encodingList
 // Parse an EXI-encoded list with the type parser `tp`
-fn parse_list<'a, O>(
-    tp: TypeParser<'a, O>,
-) -> impl FnMut(BitInput<'a>) -> ExiResult<BitInput<'a>, Vec<O>> {
+fn parse_list<'a, O>(tp: TypeParser<'a, O>) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, Vec<O>> {
     move |i: BitInput<'a>| {
         let (rest, len) = unsigned_int(i)?;
         count(tp, len.try_into().unwrap())(rest)
@@ -348,10 +341,7 @@ impl From<Value> for String {
 mod tests {
     use super::*;
 
-    fn check_failure_contents<I: Clone + PartialEq + std::fmt::Debug, O: std::fmt::Debug>(
-        r: ExiResult<I, O>,
-        v: I,
-    ) {
+    fn check_failure_contents<O: std::fmt::Debug>(r: ExiResult<O>, v: BitInput) {
         match r {
             Err(nom::Err::Error(e)) => assert_eq!(e.input, v),
             wat => panic!("Unexpected {:?}", wat),
