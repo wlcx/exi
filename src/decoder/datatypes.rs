@@ -268,12 +268,6 @@ pub fn parse_string_with_len_offset(len_offset: u8) -> impl FnMut(BitInput) -> E
             ),
             usize::try_from(len).unwrap(),
         )(rem)?;
-        let codepoints: Vec<u32> = codepoints
-            .into_iter()
-            .map(u32::try_from)
-            .collect::<Result<_, _>>()
-            // TODO: this error handling is cheesy, we should have custom types really
-            .map_err(|_| nom::Err::Failure(make_exierror(i, ExiErrorKind::BadString)))?;
         // FIXME: Currently this drops invalid codepoints silently, we should instead return
         // an error
         let s = codepoints
