@@ -52,9 +52,9 @@ impl<T: std::fmt::Debug> PrefixTable<T> {
     fn add(&mut self, i: T) -> usize {
         self.0.push(i);
         log::trace!(
-            "Added {:?} to prefix table, contents: {:?}",
+            "Added {:?} to prefix table, new len: {}",
             self.0[self.0.len() - 1],
-            self.0
+            self.0.len()
         );
         self.0.len() + 1
     }
