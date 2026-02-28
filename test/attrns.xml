@@ -1,0 +1,2 @@
+<hello xmlns:foo="http://example.com/foo" foo:bar="whatup"></hello>
+

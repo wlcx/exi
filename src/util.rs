@@ -6,10 +6,10 @@ use nom::{IResult, bits::complete::take};
 pub type BitInput<'a> = (&'a [u8], usize);
 
 pub fn ilog2_ceil(v: usize) -> u32 {
-    if v == 0 {
-        return 0;
+    match v {
+        0 => 0,
+        _ => usize::BITS - (v - 1).leading_zeros(),
     }
-    usize::BITS - (v - 1).leading_zeros()
 }
 
 // Return the number of values in a closed bound, with None meaning the bound open
@@ -46,6 +46,13 @@ pub fn trailing_bits(i: BitInput) -> IResult<BitInput, usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ilog2_ceil() {
+        for i in 0..=256 {
+            assert_eq!(ilog2_ceil(i), f64::log2(i as f64).ceil() as u32)
+        }
+    }
 
     #[test]
     fn test_bound_values() {

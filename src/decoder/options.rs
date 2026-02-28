@@ -62,3 +62,10 @@ impl Default for Options {
         }
     }
 }
+
+impl Options {
+    pub fn with_preserve_prefixes(mut self, v: bool) -> Self {
+        self.preserve.prefixes = v;
+        self
+    }
+}

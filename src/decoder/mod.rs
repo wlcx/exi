@@ -28,6 +28,7 @@ use nom::{
 };
 use options::Options;
 
+use crate::decoder::datatypes::string;
 use crate::decoder::grammars::{Grammar, GrammarInstance, GrammarType};
 use crate::util::{BitInput, ilog2_ceil, trailing_bits};
 
@@ -146,9 +147,7 @@ impl StringTable {
             let (rest, prefix) = n_bit_unsigned_int(to_take, true)(i)?;
             log::trace!("parse_uri prefix = {}", prefix);
             if prefix == 0 {
-                // Miss, what follows is a full uri (string, with length field n+1 where n
-                // is the length of the string)
-                let (rest2, uri) = parse_string_with_len_offset(1)(i)?;
+                let (rest2, uri) = string(rest)?;
                 log::trace!("parse uri: miss, adding {}", uri);
                 self.uris.add(URIStringTable::with_uri(uri.clone()));
                 Ok((rest2, uri))
@@ -166,8 +165,61 @@ impl StringTable {
         }
     }
 
-    fn parse_prefix<'a>(&mut self) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, String> {
-        move |i| Ok((i, "fakeprefix".into()))
+    // Using the string table, parse a qname prefix from the bitstream.
+    // In qnames, if the prefix isn't in the string table, the qname MUST be part of an SE event, and the prefix is resolved by an NS event immediately following the SE with `local-element-ns` set to true.
+    // Prefix partitions are "optimised for frequent use of compact identifiers",
+    fn parse_qname_prefix<'a>(
+        &mut self,
+        uri: &str,
+    ) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, Option<String>> {
+        move |i| {
+            let Some(st) = self.uris.find(uri) else {
+                todo!("better error");
+            };
+            // Unlike other string table accesses, we don't use `len() + 1` because for qname prefixes 0 is not used to signal "missing from string table".
+            let to_take = ilog2_ceil(st.prefix.len());
+            log::trace!(
+                "parse_qname_prefix for uri {} partition len {}, using {}-bit prefix",
+                uri,
+                st.prefix.len(),
+                to_take
+            );
+            let (rest, prefix) = n_bit_unsigned_int(to_take, true)(i)?;
+            log::trace!("parse_qname_prefix compact identifier = {}", prefix);
+
+            Ok((rest, st.prefix.get(prefix as usize).map(Clone::clone)))
+        }
+    }
+
+    fn parse_prefix<'a>(&mut self, uri: &str) -> impl FnMut(BitInput<'a>) -> ExiResult<'a, String> {
+        move |i| {
+            let Some(st) = self.uris.find(uri) else {
+                todo!("better error");
+            };
+            let to_take = ilog2_ceil(st.prefix.len() + 1);
+            log::trace!(
+                "parse_prefix for uri {} partition len {}, using {}-bit prefix",
+                uri,
+                st.prefix.len(),
+                to_take
+            );
+            let (rest, prefix) = n_bit_unsigned_int(to_take, true)(i)?;
+            log::trace!("parse_prefix compact identifier = {}", prefix);
+            if prefix == 0 {
+                let (rest2, pfx) = string(rest)?;
+                log::trace!("parse_prefix: miss, adding {}", uri);
+                st.prefix.add(pfx.clone());
+                Ok((rest2, pfx))
+            } else {
+                let u = st
+                    .prefix
+                    .get((prefix - 1).try_into().unwrap())
+                    .map(Clone::clone)
+                    .unwrap();
+                log::trace!("parse_prefix: hit, got '{}'", u);
+                Ok((rest, u))
+            }
+        }
     }
 
     // Using the string table, parse a local name from the bitstream.
@@ -305,7 +357,7 @@ pub enum Event {
     NamespaceDeclaration {
         uri: String,
         prefix: String,
-        local_e_ns: bool,
+        local_element_ns: bool,
     },
     /// A comment node.
     ///
@@ -484,6 +536,14 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                 // Parse the qname
                 let (r1, qname) =
                     qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                // TODO: resolve local-element-ns qname prefixes
+                if qname == "xsi:type".into() {
+                    return make_exierror(
+                        i,
+                        ExiErrorKind::NotImplemented("xsi:type handling in attributes".into()),
+                    )
+                    .into();
+                }
                 // Parse the value
                 let (rest, value) =
                     state.string_table.clone().borrow_mut().parse_value(&qname)(r1)?;
@@ -506,6 +566,27 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                 };
                 grammar_stack.push(GrammarInstance::instantiate(eg.clone()));
                 (input, Event::StartElement(qname))
+            }
+            ParseEvent::NS => {
+                let mut st = state.string_table.borrow_mut();
+                let (r1, uri) = st.parse_uri()(input)?;
+                let (r2, prefix) = st.parse_prefix(&uri)(r1)?;
+                let (r3, local_element_ns) = bool(r2)?;
+                if local_element_ns {
+                    return make_exierror(
+                        r3,
+                        ExiErrorKind::NotImplemented("local_element_ns prefix resolution".into()),
+                    )
+                    .into();
+                }
+                (
+                    r3,
+                    Event::NamespaceDeclaration {
+                        uri,
+                        prefix,
+                        local_element_ns,
+                    },
+                )
             }
             e => {
                 return make_exierror(
@@ -647,11 +728,11 @@ mod tests {
 
     type TE<T> = Result<T, Box<dyn std::error::Error>>;
 
-    fn decode_file(name: &str) -> TE<Stream> {
+    fn decode_file(name: &str, opts: Option<Options>) -> TE<Stream> {
         let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", name].iter().collect();
         let mut buf = Vec::new();
         File::open(d)?.read_to_end(&mut buf)?;
-        decode(&buf, None)
+        decode(&buf, opts)
     }
 
     #[test]
@@ -697,7 +778,7 @@ mod tests {
 
     #[test]
     fn helloworld() -> TE<()> {
-        let s = decode_file("helloworld.xml.exi")?;
+        let s = decode_file("helloworld.xml.exi", None)?;
         assert_eq!(
             s.body,
             vec!(
@@ -713,7 +794,7 @@ mod tests {
 
     #[test]
     fn notebook() -> TE<()> {
-        let s = decode_file("notebook.xml.exi")?;
+        let s = decode_file("notebook.xml.exi", None)?;
         assert_eq!(
             s.body,
             vec!(
@@ -760,7 +841,7 @@ mod tests {
 
     #[test]
     fn test_nested() -> TE<()> {
-        let s = decode_file("nested.xml.exi")?;
+        let s = decode_file("nested.xml.exi", None)?;
         assert_eq!(
             s.body,
             vec![
@@ -773,6 +854,41 @@ mod tests {
                 Event::EndElement,
                 Event::EndDocument,
             ],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_attr_ns() -> TE<()> {
+        let s = decode_file(
+            "attrns.xml.exi",
+            Options::default().with_preserve_prefixes(true).into(),
+        )?;
+        assert_eq!(
+            s.body,
+            vec![
+                Event::StartDocument,
+                Event::StartElement(Qname {
+                    uri: "".into(),
+                    local_name: "hello".into(),
+                    prefix: Some("".into())
+                }),
+                Event::NamespaceDeclaration {
+                    uri: "http://example.com/foo".into(),
+                    prefix: "foo".into(),
+                    local_element_ns: false
+                },
+                Event::Attribute {
+                    qname: Qname {
+                        uri: "http://example.com/foo".into(),
+                        local_name: "bar".into(),
+                        prefix: Some("foo".into())
+                    },
+                    value: "whatup".into()
+                },
+                Event::EndElement,
+                Event::EndDocument,
+            ]
         );
         Ok(())
     }

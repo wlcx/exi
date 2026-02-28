@@ -209,13 +209,14 @@ pub fn qname<'a>(
         let (r, uri) = st.borrow_mut().parse_uri()(i)?;
         let (r1, local_name) = st.borrow_mut().parse_localname(&uri)(r)?;
         if preserve_prefix {
-            let (r2, pref) = st.borrow_mut().parse_prefix()(i)?;
+            // Now, this is a bit of a complex one. If the preserve prefix option is set we need to wait to see if there's an immediately following NS event "resolving" a missing prefix. Because the spec says that in the case of a missing prefix, the compact identifier is arbitrary so **could still be that of a valid prefix** https://www.w3.org/TR/exi/#encodingQName
+            let (r2, pref) = st.borrow_mut().parse_qname_prefix(&uri)(r1)?;
             Ok((
                 r2,
                 Qname {
                     uri,
                     local_name,
-                    prefix: Some(pref),
+                    prefix: pref,
                 },
             ))
         } else {
