@@ -481,7 +481,11 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
     let state = Rc::new(DecoderState::init(opts));
     let mut grammar_stack = GrammarStack::new();
     grammar_stack.push(GrammarInstance::instantiate(Rc::new(RefCell::new(
-        Grammar::builtin_document_grammar(state.options),
+        if opts.fragment {
+            Grammar::builtin_fragment_grammar(state.options)
+        } else {
+            Grammar::builtin_document_grammar(state.options)
+        },
     ))));
     let mut output = Vec::new();
     let mut input = i;
@@ -886,6 +890,32 @@ mod tests {
                     },
                     value: "whatup".into()
                 },
+                Event::EndElement,
+                Event::EndDocument,
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_fragment() -> TE<()> {
+        let s = decode_file(
+            "fragment.xml.exi",
+            Options::default().with_fragment(true).into(),
+        )?;
+
+        assert_eq!(
+            s.body,
+            vec![
+                Event::StartDocument,
+                Event::StartElement("hi".into()),
+                Event::Characters("I am in a fragment".into()),
+                Event::EndElement,
+                Event::StartElement("look".into()),
+                Event::Characters("\n  at my multiple top level elements\n  ".into()),
+                Event::StartElement("indeed".into()),
+                Event::Characters("most impressive".into()),
+                Event::EndElement,
                 Event::EndElement,
                 Event::EndDocument,
             ]

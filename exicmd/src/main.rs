@@ -37,9 +37,12 @@ enum Commands {
         /// Number of spaces to indent pretty output)
         #[arg(short, long)]
         indent: Option<u8>,
-        /// Preserve prefixes
+        /// Decode with the "preserve prefixes" EXI option enabled. Only valid when the EXI document doesn't have embedded options.
         #[arg(short, long)]
         preserve_prefixes: bool,
+        /// Decode with the "fragment" EXI option enabled. Only valid when the EXI document doesn't have embedded options.
+        #[arg(short, long)]
+        fragment: bool,
     },
 }
 
@@ -67,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             out_file,
             indent,
             preserve_prefixes,
+            fragment,
         } => {
             let mut buf = Vec::new();
             let mut input: Box<dyn BufRead> = match in_file {
@@ -82,10 +86,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(n) => quick_xml::Writer::new_with_indent(output, b' ', n.into()),
                 None => quick_xml::Writer::new(output),
             };
-            let opts = if preserve_prefixes {
-                let mut o = Options::default();
-                o.preserve.prefixes = true;
-                Some(o)
+            let opts = if preserve_prefixes || fragment {
+                Some(
+                    Options::default()
+                        .with_preserve_prefixes(preserve_prefixes)
+                        .with_fragment(fragment),
+                )
             } else {
                 None
             };

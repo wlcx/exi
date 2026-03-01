@@ -68,4 +68,9 @@ impl Options {
         self.preserve.prefixes = v;
         self
     }
+
+    pub fn with_fragment(mut self, v: bool) -> Self {
+        self.fragment = v;
+        self
+    }
 }

@@ -74,7 +74,7 @@
       # Provide a dev env with rust and rust-analyzer
       devShells.default = craneLib.devShell {
         #checks = self.checks.${system};
-        packages = [ pkgs.rust-analyzer ];
+        packages = [ pkgs.rust-analyzer pkgs.exificient];
       };
       formatter = pkgs.alejandra;
 

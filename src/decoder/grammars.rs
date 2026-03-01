@@ -69,7 +69,7 @@ impl Grammar {
 
     fn pprint(&self) {
         log::trace!(
-            "{}",
+            "\n{}",
             self.states
                 .iter()
                 .map(|(name, codetree)| { format!("{}\n{}\n\n", name, codetree.pprint()) })
@@ -80,7 +80,7 @@ impl Grammar {
     fn specialise(&mut self, state: StateHandle, ev: &Event) {
         match self.r#type {
             GrammarType::Document => {
-                // Document grammars aren't specialised
+                // Documents aren't specialised
                 return;
             }
             GrammarType::Element(_) => {
@@ -127,7 +127,20 @@ impl Grammar {
                 }
             }
             GrammarType::Fragment => {
-                unimplemented!();
+                let s = &mut self.states[state].1;
+                match ev {
+                    Event::StartElement(qname) => {
+                        log::trace!("Adding SEQname({}) to grammar", qname);
+                        let new = Prod(
+                            ParseEvent::SEQname(qname.clone()),
+                            GrammarInstanceState::Live(1),
+                        );
+                        // Sanity check: there shouldn't be matching SEQname in the grammar already
+                        assert!(s.iter().position(|e| *e == new).is_none());
+                        *s = s.insert(0, new);
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -141,7 +154,7 @@ impl Grammar {
                 format!("Element({})[{}]", qname, state.describe_with(self))
             }
             GrammarType::Fragment => {
-                unimplemented!()
+                format!("Fragment[{}]", state.describe_with(self))
             }
         }
     }
@@ -218,7 +231,7 @@ impl Grammar {
     }
 
     // https://www.w3.org/TR/exi/#builtinFragGrammars
-    pub(super) fn builtin_fragment_grammar(o: Rc<Options>) -> Self {
+    pub(super) fn builtin_fragment_grammar(o: &Options) -> Self {
         Self {
             r#type: GrammarType::Fragment,
             states: vec![
