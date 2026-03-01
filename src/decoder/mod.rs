@@ -17,6 +17,7 @@ use datatypes::{
 use errors::{ExiError, ExiErrorKind, make_exierror};
 use nom::branch::alt;
 use nom::combinator::{all_consuming, map, success};
+use nom::sequence::pair;
 use nom::{
     IResult,
     bits::{
@@ -591,10 +592,10 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                     },
                 )
             }
-            ParseEvent::CM => {
-                let (rest, c) = string(input)?;
-                (rest, Event::Comment(c))
-            }
+            ParseEvent::CM => map(string, |s| Event::Comment(s))(input)?,
+            ParseEvent::PI => map(pair(string, string), |(name, text)| {
+                Event::ProcessingInstruction { name, text }
+            })(input)?,
             e => {
                 return make_exierror(
                     i,
@@ -940,6 +941,29 @@ mod tests {
                 Event::Comment("Hello there".into()),
                 Event::StartElement("foo".into()),
                 Event::EndElement,
+                Event::EndDocument,
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_preserve_pis() -> TE<()> {
+        let s = decode_file(
+            "pis.xml.exi",
+            Options::default().with_preserve_pis(true).into(),
+        )?;
+
+        assert_eq!(
+            s.body,
+            vec![
+                Event::StartDocument,
+                Event::StartElement("hello".into()),
+                Event::EndElement,
+                Event::ProcessingInstruction {
+                    name: "something".into(),
+                    text: "i guess this is free text".into()
+                },
                 Event::EndDocument,
             ]
         );

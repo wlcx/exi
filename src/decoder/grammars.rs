@@ -217,8 +217,8 @@ impl Grammar {
                     "DocEnd".into(),
                     codetree!(
                         0     => Prod(ParseEvent::ED, GrammarInstanceState::Terminated);
-                        1,0   => Prod(ParseEvent::CM, GrammarInstanceState::Live(1)), o.preserve.comments;
-                        1,1   => Prod(ParseEvent::PI, GrammarInstanceState::Live(1)), o.preserve.pis;
+                        1,0   => Prod(ParseEvent::CM, GrammarInstanceState::Live(2)), o.preserve.comments;
+                        1,1   => Prod(ParseEvent::PI, GrammarInstanceState::Live(2)), o.preserve.pis;
 
                     ),
                 ),

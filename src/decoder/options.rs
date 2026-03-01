@@ -79,4 +79,9 @@ impl Options {
         self.preserve.comments = v;
         self
     }
+
+    pub fn with_preserve_pis(mut self, v: bool) -> Self {
+        self.preserve.pis = v;
+        self
+    }
 }
