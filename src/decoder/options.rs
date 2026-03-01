@@ -74,4 +74,9 @@ impl Options {
         self.fragment = v;
         self
     }
+
+    pub fn with_preserve_comments(mut self, v: bool) -> Self {
+        self.preserve.comments = v;
+        self
+    }
 }

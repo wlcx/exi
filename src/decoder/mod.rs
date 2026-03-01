@@ -591,6 +591,10 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                     },
                 )
             }
+            ParseEvent::CM => {
+                let (rest, c) = string(input)?;
+                (rest, Event::Comment(c))
+            }
             e => {
                 return make_exierror(
                     i,
@@ -915,6 +919,26 @@ mod tests {
                 Event::StartElement("indeed".into()),
                 Event::Characters("most impressive".into()),
                 Event::EndElement,
+                Event::EndElement,
+                Event::EndDocument,
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_preserve_comments() -> TE<()> {
+        let s = decode_file(
+            "comments.xml.exi",
+            Options::default().with_preserve_comments(true).into(),
+        )?;
+
+        assert_eq!(
+            s.body,
+            vec![
+                Event::StartDocument,
+                Event::Comment("Hello there".into()),
+                Event::StartElement("foo".into()),
                 Event::EndElement,
                 Event::EndDocument,
             ]

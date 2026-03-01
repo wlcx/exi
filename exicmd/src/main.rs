@@ -38,8 +38,11 @@ enum Commands {
         #[arg(short, long)]
         indent: Option<u8>,
         /// Decode with the "preserve prefixes" EXI option enabled. Only valid when the EXI document doesn't have embedded options.
-        #[arg(short, long)]
+        #[arg(short = 'p', long)]
         preserve_prefixes: bool,
+        /// Decode with the "preserve comments" EXI option enabled. Only valid when the EXI document doesn't have embedded options.
+        #[arg(short = 'c', long)]
+        preserve_comments: bool,
         /// Decode with the "fragment" EXI option enabled. Only valid when the EXI document doesn't have embedded options.
         #[arg(short, long)]
         fragment: bool,
@@ -70,6 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             out_file,
             indent,
             preserve_prefixes,
+            preserve_comments,
             fragment,
         } => {
             let mut buf = Vec::new();
@@ -86,10 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(n) => quick_xml::Writer::new_with_indent(output, b' ', n.into()),
                 None => quick_xml::Writer::new(output),
             };
-            let opts = if preserve_prefixes || fragment {
+            let opts = if preserve_prefixes || fragment || preserve_comments {
                 Some(
                     Options::default()
                         .with_preserve_prefixes(preserve_prefixes)
+                        .with_preserve_comments(preserve_comments)
                         .with_fragment(fragment),
                 )
             } else {
