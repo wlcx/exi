@@ -201,7 +201,7 @@ impl Hash for Qname {
 
 // https://www.w3.org/TR/exi/#encodingQName
 pub fn qname<'a>(
-    st: Rc<RefCell<StringTable>>,
+    st: &RefCell<StringTable>,
     preserve_prefix: bool,
 ) -> impl Fn(BitInput<'a>) -> ExiResult<'a, Qname> {
     move |i| {

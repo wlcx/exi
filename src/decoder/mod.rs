@@ -244,13 +244,14 @@ impl StringTable {
             )(i)
             {
                 log::trace!("parse localname: hit, got {}", s);
-                return Ok((rest, s));
+                Ok((rest, s))
+            } else {
+                // Miss - a string with length incremented by 1
+                let (rest, s) = parse_string_with_len_offset(1)(i)?;
+                log::trace!("parse localname: miss, adding {}", s);
+                ln.add(s.clone());
+                Ok((rest, s))
             }
-            // Miss - a string with length incremented by 1
-            let (rest, s) = parse_string_with_len_offset(1)(i)?;
-            log::trace!("parse localname: miss, adding {}", s);
-            ln.add(s.clone());
-            Ok((rest, s))
         }
     }
 
@@ -478,8 +479,11 @@ impl GrammarStack {
     }
 }
 
+/// Decode an EXI body - the main chunk of the stream, after the header.
+///
+/// Body decoding is configured by Options, which may be embedded in the header or provided externally, or neither in which case defaults are used.
 fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
-    let state = Rc::new(DecoderState::init(opts));
+    let mut state = DecoderState::init(opts);
     let mut grammar_stack = GrammarStack::new();
     grammar_stack.push(GrammarInstance::instantiate(Rc::new(RefCell::new(
         if opts.fragment {
@@ -503,18 +507,20 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
             ParseEvent::SD => success(Event::StartDocument)(input)?,
             ParseEvent::SE => {
                 let (r1, qname) =
-                    qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                    qname(&state.string_table, state.options.preserve.prefixes)(input)?;
                 let ev = Event::StartElement(qname.clone());
                 // Add a SE ( qname ) production to the current grammar
                 grammar_stack.current_mut().specialise(statehandle, &ev);
-                let mut egs = state.global_element_grammars.borrow_mut();
-                let g = egs.entry(qname.clone()).or_insert_with(|| {
-                    log::trace!("creating new global element grammar for qname {}", qname);
-                    Rc::new(RefCell::new(Grammar::builtin_element_grammar(
-                        state.options,
-                        qname,
-                    )))
-                });
+                let g = state
+                    .global_element_grammars
+                    .entry(qname.clone())
+                    .or_insert_with(|| {
+                        log::trace!("creating new global element grammar for qname {}", qname);
+                        Rc::new(RefCell::new(Grammar::builtin_element_grammar(
+                            state.options,
+                            qname,
+                        )))
+                    });
                 grammar_stack.push(GrammarInstance::instantiate(g.clone()));
                 (r1, ev)
             }
@@ -523,8 +529,7 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                     // Shouldn't have any other grammar type if we've just parsed a CH
                     todo!("Throw a proper error");
                 };
-                let (r, value) =
-                    state.string_table.clone().borrow_mut().parse_value(&qname)(input)?;
+                let (r, value) = state.string_table.borrow_mut().parse_value(&qname)(input)?;
                 let ev = Event::Characters(value);
                 grammar_stack.current_mut().specialise(statehandle, &ev);
                 (r, ev)
@@ -540,7 +545,7 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
             ParseEvent::AT => {
                 // Parse the qname
                 let (r1, qname) =
-                    qname(state.string_table.clone(), state.options.preserve.prefixes)(input)?;
+                    qname(&state.string_table, state.options.preserve.prefixes)(input)?;
                 // TODO: resolve local-element-ns qname prefixes
                 if qname == "xsi:type".into() {
                     return make_exierror(
@@ -550,21 +555,18 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                     .into();
                 }
                 // Parse the value
-                let (rest, value) =
-                    state.string_table.clone().borrow_mut().parse_value(&qname)(r1)?;
+                let (rest, value) = state.string_table.borrow_mut().parse_value(&qname)(r1)?;
                 let ev = Event::Attribute { qname, value };
                 // Add to this element's grammar
                 grammar_stack.current_mut().specialise(statehandle, &ev);
                 (rest, ev)
             }
             ParseEvent::ATQname(qname) => {
-                let (rest, value) =
-                    state.string_table.clone().borrow_mut().parse_value(&qname)(input)?;
+                let (rest, value) = state.string_table.borrow_mut().parse_value(&qname)(input)?;
                 (rest, Event::Attribute { qname, value })
             }
             ParseEvent::SEQname(qname) => {
-                let egs = state.global_element_grammars.borrow();
-                let Some(eg) = egs.get(&qname) else {
+                let Some(eg) = state.global_element_grammars.get(&qname) else {
                     todo!(
                         "SEQname can't exist without a global element grammar for it, thow a proper error"
                     );
@@ -679,16 +681,16 @@ pub fn decode(
 // (mutable - added to as the decoder progresses)
 struct DecoderState<'a> {
     options: &'a Options,
-    string_table: Rc<RefCell<StringTable>>,
-    global_element_grammars: RefCell<HashMap<Qname, Rc<RefCell<Grammar>>>>,
+    string_table: RefCell<StringTable>,
+    global_element_grammars: HashMap<Qname, Rc<RefCell<Grammar>>>,
 }
 
 impl<'a> DecoderState<'a> {
     fn init(opts: &'a Options) -> Self {
         Self {
             options: opts,
-            string_table: Rc::new(RefCell::new(StringTable::default())),
-            global_element_grammars: RefCell::new(HashMap::new()),
+            string_table: RefCell::new(StringTable::default()),
+            global_element_grammars: HashMap::new(),
         }
     }
 }
