@@ -84,4 +84,8 @@ impl Options {
         self.preserve.pis = v;
         self
     }
+    pub fn with_preserve_dtd(mut self, v: bool) -> Self {
+        self.preserve.dtd = v;
+        self
+    }
 }

@@ -1,0 +1,4 @@
+<!DOCTYPE hello PUBLIC "bar" "https://example.com/bar" [
+  <!ENTITY BarEntity 'Baz'>
+]>
+<hello>world &BarEntity;</hello>

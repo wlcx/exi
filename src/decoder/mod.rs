@@ -597,6 +597,18 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
             ParseEvent::PI => map(pair(string, string), |(name, text)| {
                 Event::ProcessingInstruction { name, text }
             })(input)?,
+            // DTs are just 4 strings
+            ParseEvent::DT => map(
+                tuple((string, string, string, string)),
+                |(name, public, system, text)| Event::Doctype {
+                    name,
+                    public,
+                    system,
+                    text,
+                },
+            )(input)?,
+            // ERs are just a string
+            ParseEvent::ER => map(string, |s| Event::EntityReference(s))(input)?,
             e => {
                 return make_exierror(
                     i,
@@ -966,6 +978,33 @@ mod tests {
                     text: "i guess this is free text".into()
                 },
                 Event::EndDocument,
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_preserve_dtd() -> TE<()> {
+        let s = decode_file(
+            "dtd.xml.exi",
+            Options::default().with_preserve_dtd(true).into(),
+        )?;
+
+        assert_eq!(
+            s.body,
+            vec![
+                Event::StartDocument,
+                Event::Doctype {
+                    name: "hello".into(),
+                    public: "bar".into(),
+                    system: "https://example.com/bar".into(),
+                    text: "<!ENTITY BarEntity \"Baz\"> ".into()
+                },
+                Event::StartElement("hello".into()),
+                Event::Characters("world ".into()),
+                Event::EntityReference("BarEntity".into()),
+                Event::EndElement,
+                Event::EndDocument
             ]
         );
         Ok(())
