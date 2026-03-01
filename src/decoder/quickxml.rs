@@ -52,7 +52,7 @@ impl<'a, T> QuickXMLEventMapper<'a, T> {
                 self.end_stack.push(BytesEnd::new(qname.to_string()));
                 // If we have parent start tag contents already, it's now complete and
                 // ready to emit.
-                if let Some(b) = std::mem::replace(&mut self.start_tag, Some(new_start)) {
+                if let Some(b) = self.start_tag.replace(new_start) {
                     self.output_queue.push_back(qEvent::Start(b));
                 }
             }

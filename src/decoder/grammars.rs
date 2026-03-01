@@ -41,7 +41,7 @@ impl GrammarInstanceState {
     fn describe_with<'a>(&self, g: &'a Grammar) -> &'a str {
         match self {
             Self::Live(handle) => &g.states[*handle].0,
-            Self::Terminated => &"terminated",
+            Self::Terminated => "terminated",
         }
     }
 }
@@ -81,7 +81,6 @@ impl Grammar {
         match self.r#type {
             GrammarType::Document => {
                 // Documents aren't specialised
-                return;
             }
             GrammarType::Element(_) => {
                 let s = &mut self.states[state].1;
@@ -93,7 +92,7 @@ impl Grammar {
                             GrammarInstanceState::Live(1),
                         );
                         // Sanity check: there shouldn't be matching SEQname in the grammar already
-                        assert!(s.iter().position(|e| *e == new).is_none());
+                        assert!(!s.iter().any(|e| *e == new));
                         *s = s.insert(0, new);
                     }
                     Event::Attribute { qname, .. } => {
@@ -104,7 +103,7 @@ impl Grammar {
                                 ParseEvent::ATQname(qname.clone()),
                                 GrammarInstanceState::Live(0),
                             );
-                            assert!(s.iter().position(|e| *e == new).is_none());
+                            assert!(!s.iter().any(|e| *e == new));
                             *s = s.insert(0, new);
                         }
                     }
@@ -128,18 +127,15 @@ impl Grammar {
             }
             GrammarType::Fragment => {
                 let s = &mut self.states[state].1;
-                match ev {
-                    Event::StartElement(qname) => {
-                        log::trace!("Adding SEQname({}) to grammar", qname);
-                        let new = Prod(
-                            ParseEvent::SEQname(qname.clone()),
-                            GrammarInstanceState::Live(1),
-                        );
-                        // Sanity check: there shouldn't be matching SEQname in the grammar already
-                        assert!(s.iter().position(|e| *e == new).is_none());
-                        *s = s.insert(0, new);
-                    }
-                    _ => {}
+                if let Event::StartElement(qname) = ev {
+                    log::trace!("Adding SEQname({}) to grammar", qname);
+                    let new = Prod(
+                        ParseEvent::SEQname(qname.clone()),
+                        GrammarInstanceState::Live(1),
+                    );
+                    // Sanity check: there shouldn't be matching SEQname in the grammar already
+                    assert!(!s.iter().any(|e| *e == new));
+                    *s = s.insert(0, new);
                 }
             }
         }

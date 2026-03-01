@@ -73,9 +73,9 @@ impl<I> From<nom::error::Error<I>> for ExiError<I> {
     }
 }
 
-impl<I, O> Into<IResult<I, O, ExiError<I>>> for ExiError<I> {
-    fn into(self) -> IResult<I, O, ExiError<I>> {
-        Err(nom::Err::Failure(self))
+impl<I, O> From<ExiError<I>> for IResult<I, O, ExiError<I>> {
+    fn from(val: ExiError<I>) -> Self {
+        Err(nom::Err::Failure(val))
     }
 }
 

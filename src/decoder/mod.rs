@@ -187,7 +187,7 @@ impl StringTable {
             let (rest, prefix) = n_bit_unsigned_int(to_take, true)(i)?;
             log::trace!("parse_qname_prefix compact identifier = {}", prefix);
 
-            Ok((rest, st.prefix.get(prefix as usize).map(Clone::clone)))
+            Ok((rest, st.prefix.get(prefix as usize).cloned()))
         }
     }
 
@@ -213,8 +213,7 @@ impl StringTable {
             } else {
                 let u = st
                     .prefix
-                    .get((prefix - 1).try_into().unwrap())
-                    .map(Clone::clone)
+                    .get((prefix - 1).try_into().unwrap()).cloned()
                     .unwrap();
                 log::trace!("parse_prefix: hit, got '{}'", u);
                 Ok((rest, u))

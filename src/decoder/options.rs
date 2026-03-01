@@ -16,6 +16,7 @@ pub struct FidelityOptions {
     pub lexical_values: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for FidelityOptions {
     fn default() -> Self {
         FidelityOptions {
