@@ -214,7 +214,8 @@ impl StringTable {
             } else {
                 let u = st
                     .prefix
-                    .get((prefix - 1).try_into().unwrap()).cloned()
+                    .get((prefix - 1).try_into().unwrap())
+                    .cloned()
                     .unwrap();
                 log::trace!("parse_prefix: hit, got '{}'", u);
                 Ok((rest, u))
