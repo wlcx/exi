@@ -35,7 +35,7 @@ enum Commands {
         /// File to output to. Defaults to stdout.
         out_file: Option<PathBuf>,
         /// Number of spaces to indent pretty output)
-        #[arg(short, long)]
+        #[arg(short = 'n', long)]
         indent: Option<u8>,
         /// Decode with the "preserve prefixes" EXI option enabled. Only valid when the EXI document doesn't have embedded options.
         #[arg(short = 'p', long)]
