@@ -1,4 +1,4 @@
-use std::ops::{Bound, RangeBounds};
+use core::ops::{Bound, RangeBounds};
 
 use nom::{IResult, bits::complete::take};
 
@@ -46,6 +46,7 @@ pub fn trailing_bits(i: BitInput) -> IResult<BitInput, usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_ilog2_ceil() {

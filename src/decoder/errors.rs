@@ -1,3 +1,4 @@
+use alloc::string::String;
 use nom::{
     ErrorConvert, IResult,
     error::{ErrorKind, ParseError},
@@ -5,19 +6,19 @@ use nom::{
 
 #[derive(PartialEq, Clone)]
 
-pub(super) struct ExiError<I> {
-    pub(super) kind: ExiErrorKind,
-    pub(super) input: I,
+pub struct ExiError<I> {
+    pub kind: ExiErrorKind,
+    pub input: I,
 }
 
 impl<I> core::fmt::Debug for ExiError<I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?}", self.kind)
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(super) enum ExiErrorKind {
+pub enum ExiErrorKind {
     /// Functionality not implemented (yet)
     NotImplemented(String),
     /// Called parse on a terminated grammar
@@ -30,18 +31,6 @@ pub(super) enum ExiErrorKind {
 
 pub(super) fn make_exierror<I>(input: I, kind: ExiErrorKind) -> ExiError<I> {
     ExiError { input, kind }
-}
-
-impl<I> ExiError<I> {
-    pub(crate) fn map_input<F, J>(self, f: F) -> ExiError<J>
-    where
-        F: FnOnce(I) -> J,
-    {
-        ExiError {
-            input: f(self.input),
-            kind: self.kind,
-        }
-    }
 }
 
 impl From<ErrorKind> for ExiErrorKind {

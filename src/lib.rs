@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 //! An EXI implementation in Rust.
 //!
 //!     use std::io::Read;
@@ -8,5 +9,6 @@
 //!     let decoded = exi::decoder::decode(&buf, None).unwrap();
 //!     println!("Decoded EXI version {:?} with {} events", decoded.header.version, decoded.body.len())
 /// EXI Decoder
+extern crate alloc;
 pub mod decoder;
 mod util;

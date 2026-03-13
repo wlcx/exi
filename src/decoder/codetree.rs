@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, iter::once};
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::{vec, vec::Vec};
+use core::cmp::Ordering;
+use core::iter::once;
 
 use nom::IResult;
 use nom::bits::complete::take;
@@ -11,18 +16,12 @@ use crate::util::{BitInput, ilog2_ceil};
 // - Each level having 0 or more left `T`s
 // - And have exactly one right `T`, which is either another CodeTree, or a terminal `T``
 #[derive(Clone, PartialEq, Debug)]
-pub(super) enum CodeTree<T: Clone> {
+pub(super) enum CodeTree<T> {
     Terminal(T),
     Node {
         left: Vec<T>,
         right: Box<CodeTree<T>>,
     },
-}
-
-struct CodeTree2<T> {
-    first: T,
-    more: Vec<T>,
-    last: Option<Box<CodeTree2<T>>>,
 }
 
 impl<T: Clone> CodeTree<T> {
@@ -40,7 +39,11 @@ impl<T: Clone> CodeTree<T> {
     }
 }
 
-impl<T: Clone + std::fmt::Debug> CodeTree<T> {
+impl<
+    #[cfg(not(feature = "defmt"))] T: core::fmt::Debug,
+    #[cfg(feature = "defmt")] T: core::fmt::Debug + defmt::Format,
+> CodeTree<T>
+{
     // Convenience function to build a codetree from a series of vecs, with each vec
     // containing elements to add at a "layer" of the codetree.
     pub(super) fn from_vecs(mut vecs: Vec<Vec<T>>) -> Self {
@@ -49,7 +52,7 @@ impl<T: Clone + std::fmt::Debug> CodeTree<T> {
         {
             vecs.pop();
         }
-        let this = vecs.remove(0);
+        let mut this = vecs.remove(0);
         let islast = vecs.is_empty();
         match (this.len(), islast) {
             (_, false) => Self::Node {
@@ -61,17 +64,20 @@ impl<T: Clone + std::fmt::Debug> CodeTree<T> {
             }
             (1, true) => Self::Node {
                 left: vec![],
-                right: Self::Terminal(this[0].to_owned()).into(),
+                right: Self::Terminal(this.pop().unwrap()).into(),
             },
-            (l @ 2.., true) => Self::Node {
-                left: this[0..l - 1].to_owned(),
-                right: Self::Terminal(this[l - 1].to_owned()).into(),
-            },
+            (2.., true) => {
+                let end = this.pop().unwrap();
+                Self::Node {
+                    left: this,
+                    right: Self::Terminal(end).into(),
+                }
+            }
         }
     }
 }
 
-impl<T: Clone + std::fmt::Display> CodeTree<T> {
+impl<T: Clone + core::fmt::Display> CodeTree<T> {
     fn _pprint(&self, prefix: &str) -> Vec<(String, String)> {
         let mut out = vec![];
         match self {
@@ -284,7 +290,8 @@ pub(crate) use codetree;
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use alloc::string::ToString;
+    use alloc::vec;
 
     use super::*;
 

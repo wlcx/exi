@@ -1,4 +1,8 @@
-use std::{cell::RefCell, fmt::Display, hash::Hash, ops::RangeBounds, rc::Rc};
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::ops::RangeBounds;
 
 use nom::{
     bits::complete::{bool, tag, take},
@@ -57,7 +61,9 @@ impl From<Decimal> for String {
         if value.negative {
             out += "-";
         }
-        out += &format!("{}.{}", value.integral, value.fractional.reverse_bits());
+        out.push_str(&value.integral.to_string());
+        out.push('.');
+        out.push_str(&value.fractional.reverse_bits().to_string());
         out
     }
 }
@@ -139,15 +145,15 @@ pub fn unsigned_int(i: BitInput) -> ExiResult<u64> {
     Ok((rem, value))
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, Eq, PartialOrd, Ord)]
 pub struct Qname {
     pub uri: String,
     pub local_name: String,
     pub prefix: Option<String>,
 }
 
-impl Display for Qname {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Qname {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut out = String::new();
         if !self.uri.is_empty() {
             out += &format!("{}:", self.uri);
@@ -192,8 +198,8 @@ impl PartialEq for Qname {
     }
 }
 
-impl Hash for Qname {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl core::hash::Hash for Qname {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.uri.hash(state);
         self.local_name.hash(state);
     }
@@ -328,7 +334,9 @@ impl From<Value> for String {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+    use std::vec;
 
     fn check_failure_contents<O: std::fmt::Debug>(r: ExiResult<O>, v: BitInput) {
         match r {

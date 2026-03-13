@@ -1,4 +1,8 @@
-use std::{cell::RefCell, fmt::Display, rc::Rc};
+use alloc::format;
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::{vec, vec::Vec};
+use core::cell::RefCell;
 
 use crate::util::BitInput;
 
@@ -26,7 +30,7 @@ pub(super) enum GrammarType {
 }
 
 // A GrammarState is a state in a grammar - it has a name (for debugging) and a CodeTree
-pub(super) type GrammarState = (String, CodeTree<Prod>);
+pub(super) type GrammarState = (&'static str, CodeTree<Prod>);
 
 // A "handle" (index) into a grammar to a state
 pub(super) type StateHandle = usize;
@@ -40,7 +44,7 @@ pub(super) enum GrammarInstanceState {
 impl GrammarInstanceState {
     fn describe_with<'a>(&self, g: &'a Grammar) -> &'a str {
         match self {
-            Self::Live(handle) => &g.states[*handle].0,
+            Self::Live(handle) => g.states[*handle].0,
             Self::Terminated => "terminated",
         }
     }
@@ -49,8 +53,8 @@ impl GrammarInstanceState {
 #[derive(Debug, Clone, PartialEq)]
 struct Prod(ParseEvent, GrammarInstanceState);
 
-impl Display for Prod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Prod {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)?;
         if let GrammarInstanceState::Live(rhs) = &self.1 {
             write!(f, "\t\t")?;
@@ -163,7 +167,7 @@ impl Grammar {
             r#type: GrammarType::Element(qname),
             states: vec![
                 (
-                    "StartTagContent".into(),
+                    "StartTagContent",
                     codetree!(
                         0,0  => Prod(ParseEvent::EE, GrammarInstanceState::Terminated);
                         0,0  => Prod(ParseEvent::AT, GrammarInstanceState::Live(0));
@@ -179,7 +183,7 @@ impl Grammar {
                     ),
                 ),
                 (
-                    "ElementContent".into(),
+                    "ElementContent",
                     codetree!(
                         0     => Prod(ParseEvent::EE, GrammarInstanceState::Terminated);
                         0,0   => Prod(ParseEvent::SE, GrammarInstanceState::Live(1));
@@ -199,13 +203,13 @@ impl Grammar {
             r#type: GrammarType::Document,
             states: vec![
                 (
-                    "Document".into(),
+                    "Document",
                     codetree!(
                         0 => Prod(ParseEvent::SD, GrammarInstanceState::Live(1));
                     ),
                 ),
                 (
-                    "DocContent".into(),
+                    "DocContent",
                     codetree!(
                         0     => Prod(ParseEvent::SE, GrammarInstanceState::Live(2));
                         1,0   => Prod(ParseEvent::DT, GrammarInstanceState::Live(1)), o.preserve.dtd;
@@ -214,7 +218,7 @@ impl Grammar {
                     ),
                 ),
                 (
-                    "DocEnd".into(),
+                    "DocEnd",
                     codetree!(
                         0     => Prod(ParseEvent::ED, GrammarInstanceState::Terminated);
                         1,0   => Prod(ParseEvent::CM, GrammarInstanceState::Live(2)), o.preserve.comments;
@@ -232,13 +236,13 @@ impl Grammar {
             r#type: GrammarType::Fragment,
             states: vec![
                 (
-                    "Fragment".into(),
+                    "Fragment",
                     codetree!(
                         0     => Prod(ParseEvent::SD, GrammarInstanceState::Live(1));
                     ),
                 ),
                 (
-                    "FragmentContent".into(),
+                    "FragmentContent",
                     codetree!(
                         0    => Prod(ParseEvent::SE, GrammarInstanceState::Live(1));
                         1    => Prod(ParseEvent::ED, GrammarInstanceState::Terminated);
@@ -286,7 +290,7 @@ impl GrammarInstance {
                 g.states[state_handle].0,
                 next_state.describe_with(&g),
             );
-            return Ok((rest, (ev, std::mem::replace(&mut self.state, next_state))));
+            return Ok((rest, (ev, core::mem::replace(&mut self.state, next_state))));
         }
         Ok((rest, (ev, self.state.clone())))
     }

@@ -3,13 +3,17 @@ mod datatypes;
 mod errors;
 mod grammars;
 pub mod options;
+#[cfg(feature = "quickxml")]
 pub mod quickxml;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fmt::Display;
-use std::ops::{Index, IndexMut};
-use std::rc::Rc;
+use alloc::borrow::ToOwned;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::ops::{Index, IndexMut};
 
 use datatypes::{
     Qname, Value, n_bit_unsigned_int, parse_string_with_len_offset, qname, unsigned_int_x,
@@ -45,7 +49,7 @@ pub struct Header {
 #[derive(Debug)]
 struct PrefixTable<T>(Vec<T>);
 
-impl<T: std::fmt::Debug> PrefixTable<T> {
+impl<T: core::fmt::Debug> PrefixTable<T> {
     fn new() -> Self {
         Self(Vec::new())
     }
@@ -119,7 +123,7 @@ impl URIStringTable {
 
 struct StringTable {
     uris: PrefixTable<URIStringTable>,
-    local_values: HashMap<Qname, PrefixTable<Rc<Value>>>,
+    local_values: BTreeMap<Qname, PrefixTable<Rc<Value>>>,
     global_values: PrefixTable<Rc<Value>>,
 }
 
@@ -317,7 +321,7 @@ impl Default for StringTable {
     fn default() -> Self {
         let mut uris = PrefixTable::new();
         uris.add(URIStringTable {
-            uri: "".to_string(),
+            uri: "".to_owned(),
             prefix: PrefixTable::with_initial([""]),
             local_name: PrefixTable::new(),
         });
@@ -335,7 +339,7 @@ impl Default for StringTable {
         StringTable {
             uris,
             global_values: PrefixTable::new(),
-            local_values: HashMap::new(),
+            local_values: BTreeMap::new(),
         }
     }
 }
@@ -595,7 +599,7 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                     },
                 )
             }
-            ParseEvent::CM => map(string, |s| Event::Comment(s))(input)?,
+            ParseEvent::CM => map(string, Event::Comment)(input)?,
             ParseEvent::PI => map(pair(string, string), |(name, text)| {
                 Event::ProcessingInstruction { name, text }
             })(input)?,
@@ -610,13 +614,11 @@ fn body<'i>(i: BitInput<'i>, opts: &Options) -> ExiResult<'i, Vec<Event>> {
                 },
             )(input)?,
             // ERs are just a string
-            ParseEvent::ER => map(string, |s| Event::EntityReference(s))(input)?,
-            e => {
-                return make_exierror(
-                    i,
-                    ExiErrorKind::NotImplemented(format!("decode event `{:?}`", e)),
-                )
-                .into();
+            ParseEvent::ER => map(string, Event::EntityReference)(input)?,
+            ParseEvent::SC => unimplemented!(),
+            ParseEvent::SEUri | ParseEvent::ATUri => {
+                return make_exierror(i, ExiErrorKind::NotImplemented("SEUri/ATUri events".into()))
+                    .into();
             }
         };
         input = rest;
@@ -667,13 +669,9 @@ fn stream(external_options: Option<Options>) -> impl Fn(BitInput) -> ExiResult<S
 pub fn decode(
     i: &[u8],
     external_options: Option<Options>,
-) -> Result<Stream, Box<dyn std::error::Error>> {
-    // "Lovely" little nested map to allow us to return unused input with a different
-    // lifetime to `i``
-    let (_, s) = bits::<_, _, ExiError<(&[u8], usize)>, ExiError<&[u8]>, _>(all_consuming(stream(
-        external_options,
-    )))(i)
-    .map_err(|e| e.map(|e2| e2.map_input(|i| i.to_owned())))?;
+) -> Result<Stream, nom::Err<ExiError<&[u8]>>> {
+    let (empty, s) = bits(all_consuming(stream(external_options)))(i)?;
+    assert!(empty.is_empty());
     Ok(s)
 }
 
@@ -682,7 +680,7 @@ pub fn decode(
 struct DecoderState<'a> {
     options: &'a Options,
     string_table: RefCell<StringTable>,
-    global_element_grammars: HashMap<Qname, Rc<RefCell<Grammar>>>,
+    global_element_grammars: BTreeMap<Qname, Rc<RefCell<Grammar>>>,
 }
 
 impl<'a> DecoderState<'a> {
@@ -690,7 +688,7 @@ impl<'a> DecoderState<'a> {
         Self {
             options: opts,
             string_table: RefCell::new(StringTable::default()),
-            global_element_grammars: HashMap::new(),
+            global_element_grammars: BTreeMap::new(),
         }
     }
 }
@@ -717,8 +715,8 @@ enum ParseEvent {
     SC,
 }
 
-impl Display for ParseEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ParseEvent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = match self {
             Self::SD => "SD",
             Self::ED => "ED",
@@ -743,6 +741,9 @@ impl Display for ParseEvent {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use alloc::boxed::Box;
+    use alloc::vec;
     use pretty_assertions::assert_eq;
     use std::{fs::File, io::Read, path::PathBuf};
 
@@ -755,7 +756,7 @@ mod tests {
         let d: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test", name].iter().collect();
         let mut buf = Vec::new();
         File::open(d)?.read_to_end(&mut buf)?;
-        decode(&buf, opts)
+        Ok(decode(&buf, opts).unwrap())
     }
 
     #[test]

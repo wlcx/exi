@@ -9,13 +9,19 @@ categories = ["parser-implementations", "encoding", "compression"]
 keywords = ["exi", "xml", "decoder"]
 readme = "readme.md"
 
+[features]
+std = ["nom/std"]
+defmt = ["dep:defmt"]
+quickxml = ["dep:quick-xml"]
+
 [workspace]
 members = [ "exicmd" ]
 
 [dependencies]
+defmt = { version = "1.0.1", optional = true }
 log = "0.4.22"
-nom = "7.1.3"
-quick-xml = "0.36.1"
+nom = { version = "7.1.3", features = [ "alloc" ], default-features = false }
+quick-xml = {version = "0.36.1", optional=true}
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
